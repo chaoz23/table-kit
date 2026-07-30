@@ -129,7 +129,7 @@ def post(cfg, ledger, text, cue=None, kind=None, send_fn=None):
                       seat=seat.id)
     if seat:
         from . import pairs
-        pairs.open_pair(ledger, "cue", f"cue-{int(t0)}", seat=seat.id,
+        pairs.open_pair(ledger, "cue", pairs.new_id("cue", t0), seat=seat.id,
                         detail=text[:120])
     return {"ok": True, "chunks": len(chunks), "mention_repaired": repaired,
             "latency_ms": latency_ms, "message_ids": ids}

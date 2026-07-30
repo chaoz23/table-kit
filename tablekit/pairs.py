@@ -26,9 +26,23 @@ file. `sweep()` converts them to `expired` and `unconsumed` explicitly, so the
 absence gets counted instead of quietly reducing the denominator.
 """
 
+import os
 import time
 
 from .events import PAIR_KINDS
+
+
+def new_id(kind, ts=None):
+    """A pair id that cannot collide with another opened in the same second.
+
+    Second-resolution ids looked fine until two beats went out inside one
+    second at a live table — the second cue took the first one's id, and
+    closing one closed both. Cue-uptake numbers computed from that are
+    quietly wrong rather than obviously broken, which is the worst way for
+    an id scheme to fail.
+    """
+    ms = int((ts if ts is not None else time.time()) * 1000)
+    return f"{kind}-{ms}-{os.urandom(2).hex()}"
 
 
 def open_pair(ledger, pair, pid, seat=None, detail=None, beat=None, ts=None):

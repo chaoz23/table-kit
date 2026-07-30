@@ -24,7 +24,7 @@ from . import detector, pairs, report, ux, uxr
 from .config import ConfigError, load as load_config
 from .events import SCHEMA, Ledger, PAIR_KINDS, SchemaError
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 USAGE = """tablekit — instrumentation for a live hybrid table
 
@@ -127,7 +127,7 @@ def cmd_beat(args):
     out = [f"beat {led.current_beat()} recorded ({rec['words']} words)"]
     code = 0
     if cue:
-        pid = f"cue-{int(rec['ts'])}"
+        pid = pairs.new_id("cue", rec["ts"])
         pairs.open_pair(led, "cue", pid, seat=(seat.id if seat else cue),
                         detail=text[:120])
         out.append(f"cue pair {pid} open for {seat.display if seat else cue}")
@@ -174,7 +174,7 @@ def cmd_roll(args):
     seat = _flag(args, "--seat")
     detail = args[0] if args else "roll called"
     cfg, led = _ctx(args)
-    pid = f"roll-{int(time.time())}"
+    pid = pairs.new_id("roll")
     pairs.open_pair(led, "roll", pid, seat=_seat_id(cfg, seat), detail=detail)
     print(f"roll pair {pid} open — close it with: tablekit consumed {pid}")
     return 0
@@ -204,7 +204,7 @@ def cmd_checkin(args):
         return 2
     cfg, led = _ctx(args)
     sid = _seat_id(cfg, seat)
-    pid = f"checkin-{int(time.time())}"
+    pid = pairs.new_id("checkin")
     pairs.open_pair(led, "checkin", pid, seat=sid, detail="checked on a quiet seat")
     print(f"checked on {sid} — pair {pid} closes when they next speak")
     return 0

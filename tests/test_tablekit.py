@@ -214,6 +214,23 @@ class TestPairs(TempLedger):
         pairs.open_pair(self.led, "cue", "c1", seat="rowan")
         self.assertEqual(pairs.sweep(self.led, ttls={"cue_ttl_s": 300}), [])
 
+    def test_ids_do_not_collide_within_one_second(self):
+        """Two beats inside one second must not share a cue id — the second
+        cue would take the first one's identity and closing one would close
+        both, making cue-uptake quietly wrong rather than obviously broken."""
+        t = time.time()
+        ids = {pairs.new_id("cue", t) for _ in range(500)}
+        self.assertEqual(len(ids), 500)
+
+    def test_two_rapid_cues_stay_separable(self):
+        t = time.time()
+        for _ in range(2):
+            pairs.open_pair(self.led, "cue", pairs.new_id("cue", t), seat="rowan", ts=t)
+        self.assertEqual(len(pairs.open_now(self.led, "cue")), 2)
+        first = pairs.open_now(self.led, "cue")[0]
+        pairs.close_pair(self.led, "cue", first["id"], "taken")
+        self.assertEqual(len(pairs.open_now(self.led, "cue")), 1)
+
     def test_summary_withholds_rate_below_floor(self):
         pairs.open_pair(self.led, "cue", "c1", seat="rowan")
         pairs.close_pair(self.led, "cue", "c1", "taken")
