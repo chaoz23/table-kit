@@ -219,8 +219,9 @@ class TestPairs(TempLedger):
         cue would take the first one's identity and closing one would close
         both, making cue-uptake quietly wrong rather than obviously broken."""
         t = time.time()
-        ids = {pairs.new_id("cue", t) for _ in range(500)}
-        self.assertEqual(len(ids), 500)
+        n = 5000
+        ids = {pairs.new_id("cue", t) for _ in range(n)}
+        self.assertEqual(len(ids), n)
 
     def test_two_rapid_cues_stay_separable(self):
         t = time.time()

@@ -26,23 +26,33 @@ file. `sweep()` converts them to `expired` and `unconsumed` explicitly, so the
 absence gets counted instead of quietly reducing the denominator.
 """
 
+import itertools
 import os
 import time
 
 from .events import PAIR_KINDS
 
+#: Guarantees uniqueness within a process. Randomness alone does not: with the
+#: timestamp pinned, two random bytes collide inside a few hundred draws.
+_SEQ = itertools.count()
+
 
 def new_id(kind, ts=None):
-    """A pair id that cannot collide with another opened in the same second.
+    """A pair id that cannot collide with another opened in the same instant.
 
     Second-resolution ids looked fine until two beats went out inside one
     second at a live table — the second cue took the first one's id, and
-    closing one closed both. Cue-uptake numbers computed from that are
-    quietly wrong rather than obviously broken, which is the worst way for
-    an id scheme to fail.
+    closing one closed both. Cue-uptake computed from that is quietly wrong
+    rather than obviously broken, which is the worst way for an id scheme to
+    fail.
+
+    Three parts, each covering what the others cannot: milliseconds order the
+    ids readably, the sequence makes collisions *impossible* within one
+    process, and the random suffix keeps two concurrent processes — a CLI
+    invocation and a listener — from landing on the same id.
     """
     ms = int((ts if ts is not None else time.time()) * 1000)
-    return f"{kind}-{ms}-{os.urandom(2).hex()}"
+    return f"{kind}-{ms}-{next(_SEQ):04x}-{os.urandom(2).hex()}"
 
 
 def open_pair(ledger, pair, pid, seat=None, detail=None, beat=None, ts=None):
