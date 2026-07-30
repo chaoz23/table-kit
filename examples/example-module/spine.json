@@ -1,0 +1,32 @@
+{
+ "title": "The Example Module",
+ "_comment": "The story lane validates flag changes against this spine. Gates constrain WHAT may become true; endings constrain HOW the story may resolve. Neither constrains which path the table takes to get there.",
+ "flags_init": {
+  "door_open": false,
+  "warned_the_village": false,
+  "bell_rung": 0
+ },
+ "hidden": ["the_drowned_name", "cellar_passage"],
+ "gates": [
+  {
+   "id": "G1",
+   "when_set": "door_open",
+   "to": true,
+   "requires": {"warned_the_village": {"eq": true}},
+   "severity": "hard",
+   "desc": "The door cannot open before the village has been warned — everything downstream assumes they had the chance to leave."
+  },
+  {
+   "id": "G2",
+   "when_set": "bell_rung",
+   "to": {"gte": 3},
+   "requires": {"door_open": {"eq": true}},
+   "severity": "soft",
+   "desc": "Ringing three times with the door shut is survivable but breaks the escalation the ending depends on."
+  }
+ ],
+ "endings": [
+  {"id": "E1", "desc": "The village leaves in time.", "requires": {"warned_the_village": {"eq": true}}},
+  {"id": "E2", "desc": "The bell finishes its count.", "requires": {"bell_rung": {"gte": 3}}}
+ ]
+}

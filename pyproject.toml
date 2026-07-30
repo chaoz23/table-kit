@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tablekit"
+version = "0.1.0"
+description = "Run a tabletop game where some seats are AI agents — transport, session ledger, and QA/QC/UX instrumentation for hybrid tables."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [{name = "chaoz23"}]
+keywords = ["ttrpg", "dnd", "game-master", "agents", "instrumentation", "telemetry", "discord"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Games/Entertainment :: Role-Playing",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/chaoz23/table-kit"
+Documentation = "https://github.com/chaoz23/table-kit/blob/main/docs/INSTRUMENTATION.md"
+
+[project.scripts]
+tablekit = "tablekit.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["tablekit"]
+
+[tool.setuptools.package-data]
+tablekit = ["table.example.json"]

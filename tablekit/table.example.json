@@ -1,0 +1,44 @@
+{
+ "name": "The Example Table",
+ "session": "session-1",
+ "data_dir": "./table-data",
+
+ "gm": {
+  "id": "gm",
+  "display": "GM",
+  "kind": "gm"
+ },
+
+ "seats": [
+  {
+   "id": "rowan",
+   "display": "Rowan",
+   "kind": "human",
+   "player": "a human player",
+   "aliases": ["ro"]
+  },
+  {
+   "id": "vesh",
+   "display": "Vesh",
+   "kind": "agent",
+   "mention": "<@000000000000000000>",
+   "aliases": ["vesh the quiet"],
+   "_comment": "An agent seat MUST carry the literal mention its platform needs. Cues without it are accepted, posted, and never delivered — with no error. The config loader refuses this file if it is missing."
+  }
+ ],
+
+ "transport": {
+  "kind": "discord",
+  "channel_id": "000000000000000000",
+  "bot_user_id": "000000000000000000",
+  "token_env": "TABLE_BOT_TOKEN"
+ },
+
+ "thresholds": {
+  "seat_quiet_s": 600,
+  "cue_ttl_s": 300,
+  "roll_ttl_s": 300,
+  "long_beat_words": 120,
+  "max_chunks": 2
+ }
+}

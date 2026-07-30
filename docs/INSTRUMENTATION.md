@@ -1,0 +1,175 @@
+# The instrumentation contract
+
+What is recorded, why those things and not others, and where every default
+number came from.
+
+## One file
+
+A session produces one append-only JSONL file. Every line is an object with
+`ts` and `type`; unknown keys are allowed and preserved, so a table can add its
+own context without forking the schema.
+
+It is one file rather than two because a separate telemetry file drifts from
+the play ledger the moment anything crashes, and then you are reconciling two
+partial accounts of the same evening. It stays compatible with `dmcheck`'s
+ledger reader because the play-lane types (`turn`, `act`, `event`) are exactly
+the ones that reader recognises, and it ignores the rest.
+
+Unknown event types are **refused at write time**. A typo that lands in the
+file as an unreadable record is worse than a crash, because months later it
+reads as an absence rather than an error.
+
+## The lanes
+
+### `qa` — did the machinery work?
+
+`qa.post`, `qa.post_failed`, `qa.inbound`, `qa.listener`, `qa.command`.
+
+Delivery, latency, listener uptime, command failures. This lane exists because
+the most expensive failure in a hybrid table is not a bug, it is a *silent*
+bug: a listener that dies mid-session means play continues, nothing errors, and
+the record simply stops.
+
+Player prose is **not stored by default**. The kit records that a seat spoke
+and roughly how much. Accumulating a transcript changes what this tool is, so
+it takes an explicit `--keep-text`.
+
+### `qc` — was the refereeing correct?
+
+`qc.finding`, `qc.pass`, `qc.mark`.
+
+Two severities:
+
+- **defect** — a boundary was crossed. Pass/fail. Worth interrupting for.
+- **attention** — a dosage reading. Real signal, no boundary crossed.
+
+The checks, and what each requires as evidence:
+
+| check | severity | fires only when |
+|---|---|---|
+| `undeliverable_cue` | defect | a beat cues an agent seat and lacks its literal mention |
+| `seat_quiet` | defect | a seat is past the idle threshold **and** has not been checked on |
+| `unnarrated` | defect | the game engine reports more log lines than were narrated |
+| `roll_unconsumed` | defect | a called roll is past its TTL with no outcome |
+| `unanswered` | attention | there is an inbound message **after** the last beat |
+| `cue_unanswered` | attention | a cue is past its TTL |
+| `long_beat` | attention | a beat exceeds the word threshold |
+| `split_beat` | attention | a beat went out as more messages than the chunk limit |
+
+Note what is *not* here: there is no check for GM silence on its own. A GM
+deliberately yielding the floor and a GM who has wandered off are identical in
+a log, and at professional tables the yielded floor is overwhelmingly the
+common case. Accusing on silence alone would make the checker wrong most of the
+time it spoke, which is how a live checker gets ignored inside twenty minutes.
+
+`unnarrated` needs the engine's own log length. Without it the check is
+**skipped, not guessed**.
+
+### `ux` — what did the seat's evening look like?
+
+`ux.beat`, `ux.turn`, `ux.seat_idle`.
+
+Arithmetic on the record: who spoke, how often, how long they waited, how long
+they went unaddressed. No scoring, deliberately. Seat airtime is the most
+tempting number here to turn into a grade and it is a bad grade — a player can
+have a superb evening in four lines, and a table where everyone speaks equally
+can be one where nothing is happening. The numbers are for noticing *shapes*
+worth going and looking at.
+
+Silence is measured against the last record in the file, not the wall clock, so
+a report reads the same tomorrow as it did at midnight. Live callers pass
+`now=` — and the detector, the thing that actually accuses, always does.
+
+### `uxr` — how did it feel from a seat?
+
+`uxr.marker`, `uxr.debrief`.
+
+The only lane that crosses the legibility boundary. Everything else here is
+recoverable from the session file afterwards; none of this is.
+
+Six markers, one token each, typed inline in chat:
+
+| marker | the seat is saying | dimension |
+|---|---|---|
+| `!huh` | I did not follow that | comprehension |
+| `!wait` | I wanted in and the moment passed | floor access |
+| `!yes` | that landed | resonance |
+| `!drag` | this is slow *for me* right now | pacing |
+| `!mine` | I got to do my character's particular thing | spotlight fit |
+| `!off` | that contradicts something established | continuity |
+
+Design notes on the vocabulary:
+
+- **Two of the six are positive.** An instrument that only collects grievances
+  teaches a GM to avoid risk, which is a different thing from teaching them to
+  run a good table.
+- **`!mine` exists because spotlight fit is its own dimension.** Length spent
+  on a player's signature capability is not the same as length spent on scene
+  description, and conflating them loses the distinction that matters most to
+  the player holding that character.
+- **Markers anchor to the beat that caused them**, not to a timestamp, so
+  friction points at something you can go and read.
+- **A note is optional** (`!huh what's a gorse`). When it is absent, the report
+  says the cause was not stated rather than inferring one, and puts the
+  question on the ask-at-the-break list.
+
+**The floor.** Below three occurrences, a marker is reported as individual
+moments with their beat numbers — never as a rate or a tendency. Three is not a
+statistical threshold; no N this small is. It is the smallest number that
+cannot be one bad moment plus noise. This rule exists because of a specific
+error: a single "what's a gorse" was once generalised into "unfamiliar diction
+fails at this table," and the player's real position was the opposite.
+
+### `out` — did it work?
+
+`out.open` / `out.close`, paired by id.
+
+A transcript records *decisions*. It shows that a GM cued a seat, called for a
+roll, checked on someone quiet. It does not show whether any of it worked,
+because the payoff is separated from the move by minutes and other people's
+turns. A pair records both halves as one thing.
+
+| pair | opens when | closes as |
+|---|---|---|
+| `cue` | a beat addresses a seat | `taken` / `expired` |
+| `roll` | a roll is called for | `consumed` / `unconsumed` |
+| `checkin` | a quiet seat is checked on | `returned` / `absent` |
+| `endmarker` | a session ends | `matched` / `diverged` |
+
+**The bar for being a pair:** the payoff must be observable by someone other
+than the person who made the move. "Did the scene feel tense" is not a pair.
+"Did the seat act within five minutes" is. Anything failing that test belongs
+in `uxr`, where it is honestly labelled self-report, or nowhere.
+
+**Expiry is a real outcome.** A cue nobody answered and a roll nobody consumed
+both look like silence in the file. `sweep()` converts them to named outcomes
+explicitly, so absence gets counted instead of quietly shrinking the
+denominator.
+
+**Rates are withheld below three closed pairs.** "0% cue uptake" computed from
+one cue is a finding about the sample, not about the table.
+
+## Where the defaults came from
+
+| default | value | provenance |
+|---|---|---|
+| `seat_quiet_s` | 600 | **live failure.** A human seat went most of an hour unaddressed while agent seats carried a scene to its climax. Nothing in the record looked wrong. |
+| `long_beat_words` | 120 | **measured, loosely.** Professional GM median is 8–14 words with about one line in six running long; 120 is well past the tail, so it flags only beats that had better be paying something off. |
+| `max_chunks` | 2 | **transport reasoning.** A beat arriving as three messages is read as three beats and the table answers the first. |
+| `cue_ttl_s`, `roll_ttl_s` | 300 | **judgment, not measurement.** Labelled as such; retune on your own outcome pairs after a few sessions, which is what the `out` lane is for. |
+| marker floor | 3 | **the gorse correction** (above). |
+| `MIN_BEATS` for a report | 3 | a session shorter than this has nothing to report on, and "no defects found" about it would be a lie of omission. |
+
+The honest summary: one default is from live failure, one is loosely
+corpus-anchored, and the rest are reasoned defaults waiting for your data. They
+are all in `table.json` and they are all meant to be changed.
+
+## What this cannot tell you
+
+Whether a beat landed. Whether an NPC felt authentic. Whether your players are
+tiring. Whether the story was any good.
+
+The `uxr` lane gets closer to these than anything derivable from a transcript,
+but it is self-report from a handful of people, and it is labelled that way
+everywhere it appears. When you want to know what a player prefers: **ask
+them, do not model them.**

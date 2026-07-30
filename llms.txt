@@ -1,0 +1,48 @@
+# tablekit
+
+> Glue and instrumentation for running a tabletop game where some of the seats
+> are AI agents. One append-only JSONL per session serves as both the play
+> ledger (in the shape dmcheck reads) and a four-lane telemetry stream. Exit
+> codes: 0 clean, 1 findings, 2 refused. Stdlib only, no network in the
+> analysis path, MIT.
+
+Use tablekit when an agent or a human needs to: run a hybrid table over a chat
+platform without cues silently failing to deliver; know mid-session whether a
+seat has been left out, a roll went unconsumed, or an engine event was never
+narrated; and afterwards, learn what the evening was actually like from each
+seat rather than from the transcript alone.
+
+## Install
+
+- `pip install tablekit`, then `tablekit init` and `tablekit markers`.
+- `python3 examples/demo_session.py` runs a whole synthetic session and prints
+  its report with no configuration and no network.
+
+## The four lanes
+
+- `qa` — delivery, latency, listener uptime, command failures. Automatic.
+- `qc` — refereeing checks, split into defects (boundary crossings, pass/fail)
+  and attention items (dosage readings). Automatic.
+- `ux` — participation and waiting, derived from the record. No scoring.
+- `uxr` — six one-token markers players type inline in chat (!huh !wait !yes
+  !drag !mine !off). The only lane that captures what a transcript cannot:
+  whether a beat landed, whether a word was understood, whether someone got to
+  do the thing their character is for.
+
+Plus `out` — outcome pairs that record an intent and its later payoff (cue
+taken, roll consumed, quiet seat returned), which is the only way to ask
+whether a craft move worked.
+
+## Contracts
+
+- A marker is evidence for a pattern, never a verdict on a beat. Below three
+  occurrences, individual moments are listed and no rate is stated.
+- Ambiguity produces silence, not an accusation. GM silence alone is never a
+  finding, because a yielded floor and an absent GM are identical in a log.
+- No composite score is produced anywhere.
+- Player prose is not stored unless you ask for it with --keep-text.
+
+## Related
+
+srdcheck (rules verdicts), charactercheck (sheet derivation), dmcheck (table
+conduct — reads this kit's session file with no export step).

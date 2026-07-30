@@ -1,0 +1,64 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Tests (stdlib only — no install needed)
+        run: python -m unittest discover -s tests -v
+      - name: The demo session runs and reports its own defects
+        run: |
+          python3 examples/demo_session.py > /tmp/demo.txt; code=$?
+          cat /tmp/demo.txt
+          test $code -eq 1 || { echo "demo should exit 1 (it contains defects on purpose)"; exit 1; }
+          grep -q "undeliverable_cue" /tmp/demo.txt
+          grep -q "seat_quiet" /tmp/demo.txt
+      - name: The cause is reported before the symptom it caused
+        run: |
+          python3 examples/demo_session.py > /tmp/demo.txt || true
+          cause=$(grep -n "undeliverable_cue" /tmp/demo.txt | head -1 | cut -d: -f1)
+          symptom=$(grep -n "seat_quiet" /tmp/demo.txt | head -1 | cut -d: -f1)
+          test "$cause" -lt "$symptom" || {
+            echo "the undeliverable cue must be reported above the silence it caused"; exit 1; }
+      - name: Package builds and the CLI runs from the built wheel
+        run: |
+          pip install build && python -m build --wheel
+          pip install dist/*.whl
+          tablekit --version
+          tablekit schema > /dev/null
+          tablekit markers > /dev/null
+
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Listener and engine parse
+        run: |
+          node --check transport/discord/listen.mjs
+          node --check engine/story.mjs
+          node --check engine/move.mjs
+          node --check engine/game.cjs
+          node --check engine/server.cjs
+      - name: Listener refuses to start without a token
+        run: |
+          cat > /tmp/t.json <<'JSON'
+          {"name":"t","seats":[{"id":"a"}],"transport":{"channel_id":"1","token_env":"NOPE_TOKEN"}}
+          JSON
+          set +e
+          node transport/discord/listen.mjs /tmp/t.json 2>/tmp/err.txt
+          test $? -eq 2 || { echo "expected exit 2"; exit 1; }
+          grep -q "NOPE_TOKEN" /tmp/err.txt

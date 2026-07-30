@@ -1,0 +1,30 @@
+{
+ "name": "tablekit",
+ "description": "Glue and instrumentation for a live tabletop game where some seats are AI agents. Produces one append-only JSONL per session that is simultaneously the play ledger (dmcheck-compatible) and a four-lane telemetry stream: qa (did the machinery work), qc (was the refereeing correct), ux (what the seat's evening looked like), uxr (how it felt from a seat, elicited from players as one-token markers). Plus outcome pairs that record whether a craft move actually worked.",
+ "invocation": {
+  "command": "tablekit",
+  "subcommands": {
+   "init [path]": "Write a starter table.json. Exit 2 if the file exists.",
+   "markers": "Print the player marker card to paste at the table.",
+   "beat \"<text>\" [--cue SEAT] [--chunks N]": "Record a GM beat; opens a cue pair and checks the cue is deliverable. Exit 1 if the cue would be dropped in transit.",
+   "inbound --seat S --text \"...\"": "Record what a seat said; extracts UXR markers, closes matching cue/checkin pairs.",
+   "roll --seat S \"<what for>\"": "Open a roll outcome pair.",
+   "consumed <pair-id> [--outcome ...]": "Close a pair. Exit 2 if the id is not open.",
+   "checkin --seat S": "Record checking on a quiet seat; closes when they next speak.",
+   "turn --seat S [--wait N]": "Record that a seat got the floor.",
+   "qc [--state FILE] [--record] [--json]": "Run the checks. Exit 1 if there are findings.",
+   "pairs [--json]": "List outcome pairs still open.",
+   "sweep": "Close pairs past their TTL with named outcomes. Exit 1 if any expired.",
+   "report [--json] [--out FILE]": "Post-session report. Exit 0 clean, 1 defects, 2 not enough data.",
+   "schema": "Event schema, pair kinds, marker vocabulary and exit codes as JSON."
+  }
+ },
+ "output": "Human-readable text by default; --json where offered. The session file is JSONL, one object per line, every line carrying ts and type.",
+ "notes": "Two contracts the tool will not bend. (1) A UXR marker is evidence for a pattern, never a verdict on a beat: below three occurrences the report shows individual moments with beat numbers and refuses to state a rate. (2) Ambiguity produces silence, not an accusation: every check requires positive evidence, so GM silence alone is never a finding. No composite score is produced anywhere, by design.",
+ "exit_codes": {"0": "clean", "1": "findings worth looking at", "2": "refused — bad input or not enough data"},
+ "related": {
+  "srdcheck": "rules verdicts",
+  "charactercheck": "character sheet derivation",
+  "dmcheck": "table conduct; reads this kit's session file directly"
+ }
+}
