@@ -138,6 +138,37 @@ class TestIngest(Base):
                               {"author": "Vesh", "content": "I wait"})
         self.assertEqual(len(pairs.open_now(self.led, "cue")), 1)
 
+    def test_ingest_is_idempotent_when_the_message_has_an_id(self):
+        """Polling transports re-read the same window constantly; a GM
+        checking the channel twice between beats is normal, and must not
+        double a seat's line count."""
+        msg = {"id": "m-1", "author": "Rowan", "content": "I go in !yes"}
+        for _ in range(4):
+            ingest.ingest_message(self.cfg, self.led, msg)
+        self.assertEqual(len(self.led.read(etype="qa.inbound")), 1)
+        self.assertEqual(len(self.led.read(etype="uxr.marker")), 1)
+
+    def test_distinct_ids_are_all_recorded(self):
+        for i in range(3):
+            ingest.ingest_message(self.cfg, self.led,
+                                  {"id": f"m-{i}", "author": "Rowan", "content": "hi"})
+        self.assertEqual(len(self.led.read(etype="qa.inbound")), 3)
+
+    def test_messages_without_ids_are_not_deduplicated(self):
+        """A transport that cannot supply ids gets at-least-once, not silence."""
+        for _ in range(2):
+            ingest.ingest_message(self.cfg, self.led,
+                                  {"author": "Rowan", "content": "hi"})
+        self.assertEqual(len(self.led.read(etype="qa.inbound")), 2)
+
+    def test_idempotent_ingest_does_not_reclose_a_pair(self):
+        post.post(self.cfg, self.led, "Rowan?", cue="rowan", send_fn=self.send)
+        msg = {"id": "m-9", "author": "Rowan", "content": "yes"}
+        ingest.ingest_message(self.cfg, self.led, msg)
+        ingest.ingest_message(self.cfg, self.led, msg)
+        closes = [r for r in self.led.read(etype="out.close")]
+        self.assertEqual(len(closes), 1)
+
     def test_unknown_speaker_is_kept_under_their_own_name(self):
         ingest.ingest_message(self.cfg, self.led,
                               {"author": "Guest", "content": "hi"})

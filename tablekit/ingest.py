@@ -32,20 +32,38 @@ from .config import ConfigError, load as load_config
 from .events import Ledger
 
 
+def already_ingested(ledger, msg_id):
+    """Has this platform message already been recorded?"""
+    if not msg_id:
+        return False
+    return any(r.get("msg_id") == msg_id
+               for r in ledger.read(etype="qa.inbound"))
+
+
 def ingest_message(cfg, ledger, msg, keep_text=False):
-    """One inbound message. Returns the events written."""
+    """One inbound message. Returns the events written.
+
+    **Idempotent when the message carries an `id`.** Push listeners deliver
+    once, but polling transports re-read the same window constantly — a GM
+    checking the channel twice between beats is the normal case, not an edge
+    case. Without this, every re-read would double a seat's line count and
+    quietly corrupt the participation numbers the report is built on.
+    """
     author = msg.get("author") or msg.get("username") or ""
     text = msg.get("content") or msg.get("text") or ""
     ts = msg.get("ts")
+    msg_id = msg.get("id")
     if cfg and cfg.is_gm(author):
         # The GM's own posts arrive back through the listener. They are
         # already recorded by `post()`; recording them again would double
         # every beat and halve every apparent player share.
         return []
+    if already_ingested(ledger, msg_id):
+        return []
     seat = cfg.seat(author) if cfg else None
     sid = seat.id if seat else author
     written = [ledger.append("qa.inbound", ts=ts, seat=sid, chars=len(text),
-                             words=len(text.split()),
+                             words=len(text.split()), msg_id=msg_id,
                              text=(text[:400] if keep_text else None))]
     written += uxr.record(ledger, sid, text, ts=ts)
     for kind, outcome in (("cue", "taken"), ("checkin", "returned")):

@@ -61,7 +61,21 @@ The splitter breaks on paragraph boundaries, then lines, and never mid-word.
 Every split is recorded with its chunk count, and more than two is an attention
 item, because at that point the transport is editing your pacing for you.
 
-## 5. Seat sync
+## 5. Ingestion is idempotent, and it has to be
+
+Push listeners deliver each message once. **Polling transports do not** — they
+re-read a window, and a GM checking the channel twice between beats is the
+normal case, not an edge case.
+
+So `ingest_message` skips any message whose platform `id` it has already
+recorded. Without that, every re-read doubles a seat's line count, and the
+participation numbers the report is built on quietly become fiction — the worst
+kind of failure here, because the output still looks perfectly reasonable.
+
+A transport that cannot supply stable ids gets at-least-once delivery rather
+than silent dropping. Over-counting you can see; under-counting you cannot.
+
+## 6. Seat sync
 
 The kit resolves a chat display name to a seat id through `aliases`. Keep that
 list generous: people rename themselves mid-campaign, and an unresolved speaker
