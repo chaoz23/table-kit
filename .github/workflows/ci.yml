@@ -19,14 +19,16 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: The demo session runs and reports its own defects
         run: |
-          python3 examples/demo_session.py > /tmp/demo.txt; code=$?
+          set +e
+          python3 examples/demo_session.py > /tmp/demo.txt
+          code=$?
+          set -e
           cat /tmp/demo.txt
-          test $code -eq 1 || { echo "demo should exit 1 (it contains defects on purpose)"; exit 1; }
+          test $code -eq 1 || { echo "demo should exit 1 (it contains defects on purpose), got $code"; exit 1; }
           grep -q "undeliverable_cue" /tmp/demo.txt
           grep -q "seat_quiet" /tmp/demo.txt
       - name: The cause is reported before the symptom it caused
         run: |
-          python3 examples/demo_session.py > /tmp/demo.txt || true
           cause=$(grep -n "undeliverable_cue" /tmp/demo.txt | head -1 | cut -d: -f1)
           symptom=$(grep -n "seat_quiet" /tmp/demo.txt | head -1 | cut -d: -f1)
           test "$cause" -lt "$symptom" || {
