@@ -26,6 +26,14 @@ import time
 from . import pairs as pairs_mod
 
 
+#: Checks that can only ever fire while the table is still sitting there.
+#: `seat_quiet` is deliberately suppressed once the session ends (everyone is
+#: quiet after a session, which is not a finding about anyone) — which means a
+#: post-hoc sweep can never surface a starved seat. The report has to say so
+#: rather than implying it looked.
+LIVE_ONLY_CHECKS = ("seat_quiet", "unnarrated")
+
+
 def _f(check, severity, detail, evidence=None, seat=None):
     return {"check": check, "severity": severity, "detail": detail,
             "evidence": evidence, "seat": seat}
@@ -75,6 +83,11 @@ def check(ledger, cfg=None, now=None, state=None):
     if cfg:
         for i, b in enumerate(beats, 1):
             if not b.get("cued_seat"):
+                continue
+            if b.get("mention_ok"):
+                # The sender already established this at send time, on the
+                # untruncated text. Trust it over a re-scan of a stored copy
+                # that may have lost a trailing mention to the 400-char cut.
                 continue
             seat = cfg.seat(b["cued_seat"])
             problem = cfg.mention_check(b.get("text", ""), seat)

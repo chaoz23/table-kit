@@ -668,3 +668,92 @@ class TestCLI(TempLedger):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUncheckedIsNotClean(TempLedger):
+    """The report must never present an absence of checking as an absence of
+    defects.
+
+    Found in the first real session: `tablekit qc` was never run once across 77
+    beats, and the report printed "Defects — none". Nothing was found because
+    nothing looked. That is the worst failure this kit can have, because a
+    comforting false negative is exactly what it exists to prevent — and it did
+    it on night one, to its author.
+    """
+
+    def _session(self, beats=5):
+        t = time.time() - 3600
+        for i in range(beats):
+            self.led.append("ux.beat", ts=t + i * 60, words=20, chunks=1,
+                            text=f"beat {i}")
+            self.led.append("qa.inbound", ts=t + i * 60 + 10, seat="rowan",
+                            chars=40)
+
+    def test_never_checked_does_not_claim_none(self):
+        self._session()
+        rep = report.build(self.led, self.cfg)
+        self.assertFalse(rep["qc"]["ran_live"])
+        text = report.render(rep)
+        self.assertIn("NOT CHECKED DURING PLAY", text)
+        self.assertNotIn("Defects — none", text)
+
+    def test_never_checked_names_what_could_not_be_checked(self):
+        """Some checks can only fire while the table is sitting there, so a
+        post-hoc sweep cannot stand in for them. Say which."""
+        self._session()
+        rep = report.build(self.led, self.cfg)
+        self.assertIn("seat_quiet", rep["qc"]["live_only_unchecked"])
+        self.assertIn("seat_quiet", report.render(rep))
+
+    def test_checked_and_clean_still_says_none(self):
+        self._session()
+        detector.record(self.led, [])          # qc ran, found nothing
+        rep = report.build(self.led, self.cfg)
+        self.assertTrue(rep["qc"]["ran_live"])
+        self.assertIn("Defects — none", report.render(rep))
+        self.assertEqual(rep["qc"]["live_only_unchecked"], [])
+
+    def test_a_recorded_finding_also_counts_as_having_checked(self):
+        self._session()
+        self.led.append("qc.finding", check="x", detail="d", severity="attention")
+        self.assertTrue(report.build(self.led, self.cfg)["qc"]["ran_live"])
+
+    def test_post_hoc_sweep_still_finds_what_it_can(self):
+        """Never running qc must not mean the report has no verdict at all."""
+        self._session()
+        self.led.append("ux.beat", words=6, chunks=1, cued_seat="vesh",
+                        text="Vesh, the door opens.")   # no literal mention
+        rep = report.build(self.led, self.cfg)
+        checks = [f["check"] for f in rep["qc"]["defects"]]
+        self.assertIn("undeliverable_cue", checks)
+
+    def test_post_hoc_findings_are_labelled_as_such(self):
+        self._session()
+        self.led.append("ux.beat", words=6, chunks=1, cued_seat="vesh",
+                        text="Vesh, go.")
+        rep = report.build(self.led, self.cfg)
+        found = [f for f in rep["qc"]["defects"] if f["check"] == "undeliverable_cue"]
+        self.assertEqual(found[0]["found"], "post-hoc")
+        self.assertIn("[found post-hoc]", report.render(rep))
+
+    def test_a_live_finding_is_not_relabelled_post_hoc(self):
+        self._session()
+        self.led.append("qc.finding", check="seat_quiet", detail="quiet",
+                        severity="defect", seat="vesh")
+        rep = report.build(self.led, self.cfg)
+        f = [x for x in rep["qc"]["defects"] if x["check"] == "seat_quiet"][0]
+        self.assertEqual(f["found"], "live")
+
+    def test_post_hoc_sweep_excludes_live_only_checks(self):
+        """A sweep must not claim to have done what the report says it could
+        not do. seat_quiet can technically fire here if the last beat is
+        recent, but reporting it would contradict the 'never given the chance'
+        message printed directly above it."""
+        now = time.time()
+        self.led.append("ux.beat", ts=now - 30, words=10, chunks=1)
+        self.led.append("qa.inbound", ts=now - 3600, seat="rowan", chars=5)
+        rep = report.build(self.led, self.cfg)
+        checks = [f["check"] for f in rep["qc"]["defects"]
+                  if f.get("found") == "post-hoc"]
+        for c in detector.LIVE_ONLY_CHECKS:
+            self.assertNotIn(c, checks)

@@ -24,7 +24,7 @@ from . import detector, pairs, report, ux, uxr
 from .config import ConfigError, load as load_config
 from .events import SCHEMA, Ledger, PAIR_KINDS, SchemaError
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 USAGE = """tablekit — instrumentation for a live hybrid table
 

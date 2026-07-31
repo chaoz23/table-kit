@@ -146,6 +146,13 @@ def post(cfg, ledger, text, cue=None, kind=None, send_fn=None):
                   message_ids=ids or None)
     ledger.append("ux.beat", words=len(text.split()), chunks=len(chunks),
                   kind=kind, cued_seat=(seat.id if seat else cue),
+                  # Record the FACT, not just the text. `text` is truncated for
+                  # storage, and the mention now trails the beat, so a long beat
+                  # loses it to the cut — after which any re-scan of the stored
+                  # copy reports a cue that was in fact delivered. Deriving a
+                  # verdict from a lossy copy of evidence you already had is a
+                  # false-positive generator.
+                  mention_ok=True,
                   text=text[:400])
     ledger.append("event", text=text[:400], actor="GM")
     if repaired:

@@ -141,6 +141,28 @@ requires `--keep-text`, which is the honest cost of an independent read.
   "unfamiliar diction fails at this table", and their real position was the
   opposite — *"I like the new words, sometimes I will have to ask."*
 
+### The report never claims clean for a session nobody checked
+
+`qc` findings only reach the report if the checks were actually run. The first
+real session ran them **zero times across 77 beats**, and the report printed
+*"Defects — none"* — nothing was found because nothing looked, stated in the
+language of a clean bill of health.
+
+The report now distinguishes three states:
+
+- **checked, clean** — `Defects — none`
+- **never checked** — `Defects — NOT CHECKED DURING PLAY`, naming the checks
+  that can only fire live (`seat_quiet`, `unnarrated`) and were never given the
+  chance
+- **found after the fact** — a post-hoc sweep runs at report time so there is
+  always a verdict, and its findings are labelled `[found post-hoc]` because
+  that is weaker evidence than a check run while the table sat there
+
+The sweep deliberately **excludes the live-only checks**. It could technically
+fire `seat_quiet` when the last beat happens to be recent, but doing so would
+contradict the line printed directly above it. A sweep that claims to have done
+what the report says it could not do is worse than one that admits the gap.
+
 ### `out` — did it work?
 
 `out.open` / `out.close`, paired by id.

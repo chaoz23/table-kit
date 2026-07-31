@@ -23,6 +23,7 @@ from "the session was fine".
 
 import json
 
+from . import detector as detector_mod
 from . import pairs as pairs_mod
 from . import ux as ux_mod
 from . import uxr as uxr_mod
@@ -57,6 +58,39 @@ def build(ledger, cfg=None, min_pattern=uxr_mod.MIN_PATTERN):
                  "sources": sorted({g.get("source", "dm") for g in group})}
         (patterns if len(group) >= min_pattern else moments).append(entry)
 
+    # Did anyone actually CHECK during play?
+    #
+    # This exists because the report used to print "Defects — none" after a
+    # session in which `qc` was never run once, across 77 beats. Nothing was
+    # found because nothing looked, and the report said so in the language of a
+    # clean bill of health. A comforting false negative is the worst failure
+    # this kit can have — it is the exact thing the kit was built to prevent.
+    qc_ran_live = any(r.get("type") in ("qc.finding", "qc.pass") for r in rows)
+
+    # Sweep now regardless, so there is always a verdict rather than only
+    # whatever happened to be recorded. Post-hoc findings are labelled: they
+    # are a weaker form of evidence than a check run while the table sat there.
+    posthoc = []
+    try:
+        for pf in detector_mod.check(ledger, cfg):
+            # Live-only checks are excluded on purpose. `seat_quiet` can still
+            # fire here if the last beat happens to be recent, but reporting it
+            # would contradict the very message printed above — that these
+            # checks were never given the chance. A sweep that claims to have
+            # done the thing it says it could not do is worse than one that
+            # admits the gap.
+            if pf.get("check") in detector_mod.LIVE_ONLY_CHECKS:
+                continue
+            pf = dict(pf)
+            pf["found"] = "post-hoc"
+            posthoc.append(pf)
+    except Exception:  # noqa: BLE001 - a report must render even if a check errors
+        posthoc = []
+    live_keys = {(f.get("check"), f.get("seat"), f.get("detail")) for f in findings}
+    findings = list(findings) + [
+        f for f in posthoc
+        if (f.get("check"), f.get("seat"), f.get("detail")) not in live_keys]
+
     # Deduplicate. QC runs between beats, so a standing defect is recorded
     # once per run — by the end of a session that is dozens of copies of one
     # problem. It is one defect that persisted, and saying so (with how many
@@ -71,7 +105,7 @@ def build(ledger, cfg=None, min_pattern=uxr_mod.MIN_PATTERN):
             continue
         entry = {"check": f["check"], "detail": f.get("detail"),
                  "seat": f.get("seat"), "evidence": f.get("evidence"),
-                 "seen": 1}
+                 "found": f.get("found", "live"), "seen": 1}
         seen[key] = entry
         defects.append(entry)
     return {
@@ -81,6 +115,9 @@ def build(ledger, cfg=None, min_pattern=uxr_mod.MIN_PATTERN):
         "seats": ux_mod.seat_stats(ledger, cfg),
         "transport": ux_mod.transport_stats(ledger),
         "qc": {
+            "ran_live": qc_ran_live,
+            "live_only_unchecked": ([] if qc_ran_live
+                                    else list(detector_mod.LIVE_ONLY_CHECKS)),
             "defects": defects,
             "attention": [{"check": f["check"], "detail": f.get("detail")}
                           for f in findings if f.get("severity") != "defect"],
@@ -122,11 +159,24 @@ def render(rep):
 
     # --- 1. defects first: the only pass/fail content in the report -----
     d = rep["qc"]["defects"]
-    add("## Defects" if d else "## Defects — none")
+    if d:
+        add("## Defects")
+    elif not rep["qc"].get("ran_live"):
+        # Never claim a clean bill of health for a session nobody checked.
+        add("## Defects — NOT CHECKED DURING PLAY")
+        add("  `tablekit qc` was never run while this session was live, so this")
+        add("  is an absence of checking, not an absence of defects.")
+        add("  A post-hoc sweep found nothing, but these checks can only fire")
+        add("  during play and were never given the chance:")
+        for c in rep["qc"].get("live_only_unchecked", []):
+            add(f"    - {c}")
+    else:
+        add("## Defects — none")
     for f in d:
         persisted = (f" (still open across {f['seen']} checks)"
                      if f.get("seen", 1) > 1 else "")
-        add(f"  ✗ {f['check']}: {f['detail']}{persisted}")
+        when = " [found post-hoc]" if f.get("found") == "post-hoc" else ""
+        add(f"  ✗ {f['check']}: {f['detail']}{persisted}{when}")
         if f.get("evidence"):
             add(f"      evidence: {f['evidence']}")
     add("")

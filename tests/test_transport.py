@@ -492,3 +492,36 @@ class TestEngineTap(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMentionFactNotRescan(Base):
+    """A verdict must not be re-derived from a lossy copy of evidence.
+
+    Found on a real session: four `undeliverable_cue` defects were reported for
+    cues that HAD been delivered. `ux.beat.text` is truncated to 400 chars for
+    storage, the mention now trails the beat, and long beats therefore lose it
+    to the cut — after which re-scanning the stored copy says it was missing.
+    """
+
+    def test_post_records_that_the_mention_was_handled(self):
+        post.post(self.cfg, self.led, "Vesh, the door opens.", cue="vesh",
+                  send_fn=self.send)
+        self.assertTrue(self.led.read(etype="ux.beat")[0]["mention_ok"])
+
+    def test_a_long_delivered_cue_is_not_flagged_after_truncation(self):
+        from tablekit import detector
+        long_beat = "The chapel is very old and the water keeps rising. " * 12
+        post.post(self.cfg, self.led, long_beat, cue="vesh", send_fn=self.send)
+        stored = self.led.read(etype="ux.beat")[0]["text"]
+        self.assertNotIn("<@42>", stored, "precondition: mention lost to truncation")
+        checks = [f["check"] for f in detector.check(self.led, self.cfg)]
+        self.assertNotIn("undeliverable_cue", checks)
+
+    def test_a_beat_without_the_flag_is_still_scanned(self):
+        """Beats recorded by the CLI carry no flag, so the text scan must still
+        protect them."""
+        from tablekit import detector
+        self.led.append("ux.beat", words=5, chunks=1, cued_seat="vesh",
+                        text="Vesh, go.")
+        checks = [f["check"] for f in detector.check(self.led, self.cfg)]
+        self.assertIn("undeliverable_cue", checks)
