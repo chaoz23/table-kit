@@ -42,6 +42,40 @@ def already_ingested(ledger, msg_id):
                for r in ledger.read(etype="qa.inbound"))
 
 
+def attribute_relay(cfg, msg):
+    """Whose roll is this, when a relay bot posted it?
+
+    Roll relays (Beyond20 and friends) post as themselves, in embeds, on
+    behalf of a player. Filed naively the whole table's dice land under one
+    synthetic seat, nobody's roll pair ever closes, and every human looks
+    silent while actually rolling all evening.
+
+    Attribution is by looking for a seat's own name in the embed. Returns
+    `(seat_id, text)` or `(None, None)` when it cannot tell — and when it
+    cannot tell it says so rather than guessing, because a roll credited to
+    the wrong seat is worse than one credited to none.
+    """
+    relays = [r.lower() for r in (cfg.transport.get("roll_relay_bots") or [])] if cfg else []
+    author = (msg.get("author") or "").lower()
+    if not relays or author not in relays:
+        return None, None
+    blob = " ".join(
+        str(part) for e in (msg.get("embeds") or [])
+        for part in (e.get("title"), e.get("description"),
+                     (e.get("author") or {}).get("name"),
+                     " ".join(f"{f.get('name','')} {f.get('value','')}"
+                              for f in (e.get("fields") or [])))
+        if part)
+    if not blob.strip():
+        return None, None
+    low = blob.lower()
+    for seat in cfg.player_seats:
+        names = {seat.display.lower(), seat.id.lower()} | set(seat.aliases)
+        if any(n and n in low for n in names):
+            return seat.id, blob.strip()
+    return None, blob.strip()
+
+
 def ingest_message(cfg, ledger, msg, keep_text=False):
     """One inbound message. Returns the events written.
 
@@ -62,16 +96,37 @@ def ingest_message(cfg, ledger, msg, keep_text=False):
         return []
     if already_ingested(ledger, msg_id):
         return []
-    seat = cfg.seat(author) if cfg else None
-    sid = seat.id if seat else author
+    relay_seat, relay_text = attribute_relay(cfg, msg)
+    via = None
+    if relay_text is not None:
+        # A relayed roll. Keep its text regardless of `keep_text`: it is dice
+        # arithmetic, not the player's prose, and it is the evidence that
+        # closes the roll pair.
+        text = relay_text
+        via = author
+        if relay_seat is None:
+            ledger.append("qa.command", cmd="relay_unattributed", ok=False,
+                          detail=f"{author} posted a roll no seat name matched",
+                          msg_id=msg_id)
+            return []
+        sid = relay_seat
+        seat = cfg.seat(sid)
+    else:
+        seat = cfg.seat(author) if cfg else None
+        sid = seat.id if seat else author
     written = [ledger.append("qa.inbound", ts=ts, seat=sid, chars=len(text),
-                             words=len(text.split()), msg_id=msg_id,
-                             text=(text[:400] if keep_text else None))]
+                             words=len(text.split()), msg_id=msg_id, via=via,
+                             text=(text[:400] if (keep_text or via) else None))]
     # Note what is NOT here: no scan of the player's words for tokens or
     # keywords. Inbound text is data about the table, never a command
     # surface. Signals are recorded deliberately by a classifier or by the
     # debrief — see tablekit.uxr.
-    for kind, outcome in (("cue", "taken"), ("checkin", "returned")):
+    closes = [("cue", "taken"), ("checkin", "returned")]
+    if via:
+        # A relayed roll is the roll arriving — that is what a roll pair is
+        # waiting for.
+        closes.append(("roll", "consumed"))
+    for kind, outcome in closes:
         for p in pairs.open_now(ledger, kind):
             if p.get("seat") == sid:
                 written.append(pairs.close_pair(

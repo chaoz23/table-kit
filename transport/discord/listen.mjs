@@ -95,6 +95,10 @@ function connect() {
         author_id: m.author?.id,
         is_bot: Boolean(m.author?.bot),
         content,
+        // Roll relays (Beyond20 and friends) put everything in embeds and
+        // leave content empty. Forward them or a player who rolls all evening
+        // reads as silent.
+        embeds: m.embeds || [],
       });
     } else if (p.op === 7 || p.op === 9) {
       ws.close();

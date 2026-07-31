@@ -75,7 +75,26 @@ kind of failure here, because the output still looks perfectly reasonable.
 A transport that cannot supply stable ids gets at-least-once delivery rather
 than silent dropping. Over-counting you can see; under-counting you cannot.
 
-## 6. Seat sync
+## 6. Roll relays post as themselves
+
+A player clicking a skill on their D&D Beyond sheet with Beyond20 installed
+gets the roll posted to Discord — by **the Beyond20 bot, in an embed**, not by
+the player and not in message content.
+
+Filed naively that breaks three things at once: every human's dice land under
+one synthetic seat, no roll pair ever closes, and a player who rolled all
+evening reads as silent in the participation numbers.
+
+So `transport.roll_relay_bots` lists the relays, the listener forwards embeds,
+and ingestion attributes a relayed roll to whichever seat's name appears in it.
+**An unattributable relay is recorded as a failure, never guessed at** — a roll
+credited to the wrong seat is worse than one credited to none.
+
+This is also why the seat panel we scoped is unnecessary for D&D Beyond
+tables: Beyond20 already provides the click-a-skill affordance, so the player
+never types dice syntax, which is the whole point of rule 4.
+
+## 7. Seat sync
 
 The kit resolves a chat display name to a seat id through `aliases`. Keep that
 list generous: people rename themselves mid-campaign, and an unresolved speaker

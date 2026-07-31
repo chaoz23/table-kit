@@ -33,7 +33,9 @@
   "kind": "discord",
   "channel_id": "000000000000000000",
   "bot_user_id": "000000000000000000",
-  "token_env": "TABLE_BOT_TOKEN"
+  "token_env": "TABLE_BOT_TOKEN",
+  "roll_relay_bots": ["Beyond20"],
+  "_relay_comment": "Bots that post dice on a player's behalf (Beyond20 relays D&D Beyond sheet rolls into Discord). Their messages are attributed to whichever seat's name appears in the embed, so a player who rolls all evening does not read as silent — and their roll pairs actually close. An unattributable relay is flagged, never guessed."
  },
 
  "thresholds": {

@@ -185,6 +185,65 @@ class TestIngest(Base):
         self.assertEqual(self.led.read(etype="qa.inbound")[0]["seat"], "Guest")
 
 
+class TestRollRelay(Base):
+    """Beyond20-style relays post as themselves, in embeds, on behalf of a
+    player. Filed naively, the whole table's dice land under one synthetic
+    seat, no roll pair ever closes, and every human reads as silent while
+    actually rolling all evening."""
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"roll_relay_bots": ["Beyond20"]}))
+
+    def _roll(self, name, total="17"):
+        return {"id": f"m-{name}-{total}", "author": "Beyond20", "content": "",
+                "embeds": [{"title": f"{name}: Perception",
+                            "description": f"Result: {total}"}]}
+
+    def test_relayed_roll_is_credited_to_the_right_seat(self):
+        ingest.ingest_message(self.cfg, self.led, self._roll("Rowan"))
+        [rec] = self.led.read(etype="qa.inbound")
+        self.assertEqual(rec["seat"], "rowan")
+        self.assertEqual(rec["via"], "Beyond20")
+
+    def test_relayed_roll_closes_the_open_roll_pair(self):
+        pairs.open_pair(self.led, "roll", "r1", seat="rowan", detail="Perception")
+        ingest.ingest_message(self.cfg, self.led, self._roll("Rowan"))
+        self.assertEqual(pairs.open_now(self.led, "roll"), [])
+
+    def test_unattributable_relay_is_flagged_not_guessed(self):
+        """A roll credited to the wrong seat is worse than one credited to
+        none."""
+        ingest.ingest_message(self.cfg, self.led, self._roll("Somebody Else"))
+        self.assertEqual(self.led.read(etype="qa.inbound"), [])
+        [c] = [r for r in self.led.read(etype="qa.command")
+               if r["cmd"] == "relay_unattributed"]
+        self.assertFalse(c["ok"])
+
+    def test_relay_text_is_kept_even_without_keep_text(self):
+        """Dice arithmetic is not the player's prose, and it is the evidence
+        that closed the pair."""
+        ingest.ingest_message(self.cfg, self.led, self._roll("Rowan"))
+        self.assertIn("Perception", self.led.read(etype="qa.inbound")[0]["text"])
+
+    def test_ordinary_bots_are_not_treated_as_relays(self):
+        ingest.ingest_message(self.cfg, self.led,
+                              {"id": "m-x", "author": "SomeBot",
+                               "content": "hello", "embeds": []})
+        self.assertEqual(self.led.read(etype="qa.inbound")[0]["seat"], "SomeBot")
+
+    def test_relay_matches_a_seat_alias(self):
+        cfg = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            seats=[{"id": "rowan", "display": "Rowan", "kind": "human",
+                    "aliases": ["rowan of the ash"]}],
+            transport={"roll_relay_bots": ["Beyond20"]}))
+        ingest.ingest_message(cfg, self.led, self._roll("Rowan of the Ash"))
+        self.assertEqual(self.led.read(etype="qa.inbound")[0]["seat"], "rowan")
+
+
 class TestEngineTap(Base):
     def test_tap_writes_new_log_lines_once(self):
         state = {"log": ["[round 1] Rowan hits", "[round 1] Goblin falls"],
