@@ -65,7 +65,7 @@ ROLL_MODES = ("self", "dm")
 
 class Seat:
     __slots__ = ("id", "display", "kind", "mention", "aliases", "player",
-                 "rolls")
+                 "rolls", "sheet_id")
 
     def __init__(self, d):
         self.id = d.get("id")
@@ -79,6 +79,10 @@ class Seat:
         self.mention = d.get("mention")
         self.aliases = [a.lower() for a in d.get("aliases", [])]
         self.player = d.get("player")
+        # Exact attribution key for relayed rolls. A character sheet id cannot
+        # be ambiguous the way a display name can, and real character names
+        # carry decoration the seat name will never match exactly.
+        self.sheet_id = d.get("sheet_id")
         self.rolls = d.get("rolls", "self")
         if self.rolls not in ROLL_MODES:
             raise ConfigError(
@@ -99,7 +103,8 @@ class Seat:
     def as_dict(self):
         return {"id": self.id, "display": self.display, "kind": self.kind,
                 "mention": self.mention, "aliases": self.aliases,
-                "player": self.player, "rolls": self.rolls}
+                "player": self.player, "rolls": self.rolls,
+                "sheet_id": self.sheet_id}
 
     @property
     def rolls_own(self):

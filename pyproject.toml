@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tablekit"
-version = "0.2.2"
+version = "0.2.3"
 description = "Run a tabletop game where some seats are AI agents — transport, session ledger, and QA/QC/UX instrumentation for hybrid tables."
 readme = "README.md"
 requires-python = ">=3.9"

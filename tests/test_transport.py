@@ -4,6 +4,7 @@ No network anywhere: `post()` takes a `send_fn` seam and everything else works
 on the session file.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -183,6 +184,91 @@ class TestIngest(Base):
         ingest.ingest_message(self.cfg, self.led,
                               {"author": "Guest", "content": "hi"})
         self.assertEqual(self.led.read(etype="qa.inbound")[0]["seat"], "Guest")
+
+
+#: Captured verbatim from a live #dnd-table session, 2026-07-31. Kept as a
+#: fixture because every assumption I made about this shape from documentation
+#: was wrong in at least one way that would have failed silently.
+REAL_BEYOND20 = {
+    "id": "real-1", "author": "Beyond 20", "content": "",
+    "embeds": [{
+        "title": "Initiative (+6)",
+        "url": "https://www.dndbeyond.com/characters/93177801",
+        "author": {"name": "William Wildmirth P3/W4 Hex/Chain",
+                   "url": "https://www.dndbeyond.com/characters/93177801"},
+        "footer": {"text": "Rolled using Beyond 20"},
+        "fields": [{"name": ":two::zero:",
+                    "value": ":game_die: 1d20 + 6 :arrow_right: (14) + 6"}],
+    }],
+}
+
+
+class TestRealBeyond20Payload(unittest.TestCase):
+    """Regression fixture from a live table. Three things differed from what
+    the docs implied, each of which fails silently rather than loudly."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.led = Ledger(os.path.join(self.dir, "s.jsonl"))
+        self.cfg = TableConfig({
+            "name": "Bell", "data_dir": self.dir,
+            "gm": {"id": "gm", "display": "GM"},
+            "seats": [{"id": "william", "display": "William", "kind": "human",
+                       "sheet_id": "93177801"}],
+            "transport": {"roll_relay_bots": ["Beyond 20"]}})
+
+    def test_bot_name_has_a_space_in_it(self):
+        """The extension is 'Beyond20'; the bot posts as 'Beyond 20'. Matching
+        the product name would attribute nothing, all evening, silently."""
+        seat, _ = ingest.attribute_relay(self.cfg, REAL_BEYOND20)
+        self.assertEqual(seat, "william")
+
+    def test_relay_name_matching_ignores_spacing(self):
+        cfg = TableConfig({
+            "name": "B", "data_dir": self.dir, "gm": {"id": "gm", "display": "GM"},
+            "seats": [{"id": "william", "display": "William", "sheet_id": "93177801"}],
+            "transport": {"roll_relay_bots": ["Beyond20"]}})
+        seat, _ = ingest.attribute_relay(cfg, REAL_BEYOND20)
+        self.assertEqual(seat, "william")
+
+    def test_total_is_decoded_from_keycap_emoji(self):
+        """The total exists only as ':two::zero:' in the field NAME."""
+        self.assertEqual(ingest.parse_relay_roll(REAL_BEYOND20)["total"], 20)
+
+    def test_spoiler_bars_are_stripped_from_the_breakdown(self):
+        msg = json.loads(json.dumps(REAL_BEYOND20))
+        msg["embeds"][0]["fields"][0]["value"] = "||:game_die: 1d20 + 6 :arrow_right: (5) + 6||"
+        msg["embeds"][0]["fields"][0]["name"] = ":one::one:"
+        parsed = ingest.parse_relay_roll(msg)
+        self.assertEqual(parsed["total"], 11)
+        self.assertNotIn("|", parsed["breakdown"])
+
+    def test_decorated_character_name_still_matches_by_name(self):
+        """'William Wildmirth P3/W4 Hex/Chain' vs a seat called 'William' —
+        equality would never match, so attribution is a substring."""
+        cfg = TableConfig({
+            "name": "B", "data_dir": self.dir, "gm": {"id": "gm", "display": "GM"},
+            "seats": [{"id": "william", "display": "William"}],
+            "transport": {"roll_relay_bots": ["Beyond 20"]}})
+        seat, _ = ingest.attribute_relay(cfg, REAL_BEYOND20)
+        self.assertEqual(seat, "william")
+
+    def test_sheet_id_wins_over_a_coincidental_name(self):
+        cfg = TableConfig({
+            "name": "B", "data_dir": self.dir, "gm": {"id": "gm", "display": "GM"},
+            "seats": [{"id": "hex", "display": "Hex"},
+                      {"id": "william", "display": "William", "sheet_id": "93177801"}],
+            "transport": {"roll_relay_bots": ["Beyond 20"]}})
+        seat, _ = ingest.attribute_relay(cfg, REAL_BEYOND20)
+        self.assertEqual(seat, "william")
+
+    def test_the_roll_lands_in_the_play_ledger(self):
+        pairs.open_pair(self.led, "roll", "r1", seat="william", detail="initiative")
+        ingest.ingest_message(self.cfg, self.led, REAL_BEYOND20)
+        [act] = self.led.read(etype="act")
+        self.assertEqual(act["roll_total"], 20)
+        self.assertEqual(act["actor"], "William")
+        self.assertEqual(pairs.open_now(self.led, "roll"), [])
 
 
 class TestRollRelay(Base):

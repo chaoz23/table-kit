@@ -27,6 +27,7 @@ the record.
 """
 
 import json
+import re
 import sys
 
 from . import pairs
@@ -42,6 +43,53 @@ def already_ingested(ledger, msg_id):
                for r in ledger.read(etype="qa.inbound"))
 
 
+#: Discord renders roll totals as keycap emoji in the embed's field name
+#: (":two::zero:" is 20). Decoding it is the only way to get the number without
+#: re-deriving it from the breakdown.
+_DIGITS = {"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+           "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"}
+
+
+def _emoji_number(text):
+    parts = re.findall(r":([a-z]+):", text or "")
+    if parts and all(p in _DIGITS for p in parts):
+        return int("".join(_DIGITS[p] for p in parts))
+    return None
+
+
+def _embed_blob(msg):
+    out = []
+    for e in (msg.get("embeds") or []):
+        for part in (e.get("title"), e.get("description"), e.get("url"),
+                     (e.get("author") or {}).get("name"),
+                     (e.get("author") or {}).get("url")):
+            if part:
+                out.append(str(part))
+        for f in (e.get("fields") or []):
+            out.append(f"{f.get('name', '')} {f.get('value', '')}")
+    return " ".join(out)
+
+
+def parse_relay_roll(msg):
+    """Pull the total and the breakdown out of a relayed roll embed.
+
+    Returns `{"label", "total", "breakdown"}` with whatever could be read.
+    Spoiler bars are stripped — a table that wraps rolls in `||` still wants
+    the number recorded.
+    """
+    out = {"label": None, "total": None, "breakdown": None}
+    for e in (msg.get("embeds") or []):
+        if e.get("title") and not out["label"]:
+            out["label"] = str(e["title"])
+        for f in (e.get("fields") or []):
+            if out["total"] is None:
+                out["total"] = _emoji_number(f.get("name", ""))
+            val = (f.get("value") or "").replace("||", "").strip()
+            if val and not out["breakdown"]:
+                out["breakdown"] = re.sub(r":[a-z_]+:", "", val).strip()
+    return out
+
+
 def attribute_relay(cfg, msg):
     """Whose roll is this, when a relay bot posted it?
 
@@ -50,25 +98,31 @@ def attribute_relay(cfg, msg):
     synthetic seat, nobody's roll pair ever closes, and every human looks
     silent while actually rolling all evening.
 
-    Attribution is by looking for a seat's own name in the embed. Returns
-    `(seat_id, text)` or `(None, None)` when it cannot tell — and when it
-    cannot tell it says so rather than guessing, because a roll credited to
-    the wrong seat is worse than one credited to none.
+    Attribution tries the exact key first: a relayed roll usually links the
+    character sheet it came from, and a sheet id cannot be ambiguous the way
+    a name can. `seat.sheet_id` in config is what makes that work. Falling
+    back to matching the seat's name inside the embed handles tables that have
+    not set one — real character names carry decoration ("William Wildmirth
+    P3/W4 Hex/Chain"), so the match is a substring, not an equality.
+
+    Returns `(seat_id, text)`, or `(None, blob)` when it cannot tell — and
+    when it cannot tell it says so rather than guessing, because a roll
+    credited to the wrong seat is worse than one credited to none.
     """
-    relays = [r.lower() for r in (cfg.transport.get("roll_relay_bots") or [])] if cfg else []
-    author = (msg.get("author") or "").lower()
+    if not cfg:
+        return None, None
+    relays = [r.lower().replace(" ", "")
+              for r in (cfg.transport.get("roll_relay_bots") or [])]
+    author = (msg.get("author") or "").lower().replace(" ", "")
     if not relays or author not in relays:
         return None, None
-    blob = " ".join(
-        str(part) for e in (msg.get("embeds") or [])
-        for part in (e.get("title"), e.get("description"),
-                     (e.get("author") or {}).get("name"),
-                     " ".join(f"{f.get('name','')} {f.get('value','')}"
-                              for f in (e.get("fields") or [])))
-        if part)
+    blob = _embed_blob(msg)
     if not blob.strip():
         return None, None
     low = blob.lower()
+    for seat in cfg.player_seats:
+        if seat.sheet_id and str(seat.sheet_id) in blob:
+            return seat.id, blob.strip()
     for seat in cfg.player_seats:
         names = {seat.display.lower(), seat.id.lower()} | set(seat.aliases)
         if any(n and n in low for n in names):
@@ -111,12 +165,20 @@ def ingest_message(cfg, ledger, msg, keep_text=False):
             return []
         sid = relay_seat
         seat = cfg.seat(sid)
+        roll = parse_relay_roll(msg)
     else:
         seat = cfg.seat(author) if cfg else None
         sid = seat.id if seat else author
     written = [ledger.append("qa.inbound", ts=ts, seat=sid, chars=len(text),
                              words=len(text.split()), msg_id=msg_id, via=via,
                              text=(text[:400] if (keep_text or via) else None))]
+    if via:
+        r = roll
+        written.append(ledger.append(
+            "act", ts=ts, actor=(seat.display if seat else sid),
+            text=f"{r['label'] or 'roll'}: {r['total'] if r['total'] is not None else '?'}"
+                 + (f" ({r['breakdown']})" if r["breakdown"] else ""),
+            roll_total=r["total"], roll_label=r["label"], via=via))
     # Note what is NOT here: no scan of the player's words for tokens or
     # keywords. Inbound text is data about the table, never a command
     # surface. Signals are recorded deliberately by a classifier or by the
