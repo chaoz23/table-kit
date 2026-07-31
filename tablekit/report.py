@@ -97,6 +97,9 @@ def build(ledger, cfg=None, min_pattern=uxr_mod.MIN_PATTERN):
             "asked": bool(debriefs),
         },
         "outcomes": pairs_mod.summary(ledger),
+        "parked": [{"topic": r.get("topic"), "detail": r.get("detail"),
+                    "seat": r.get("seat")}
+                   for r in rows if r.get("type") == "qa.delta"],
     }
 
 
@@ -231,6 +234,14 @@ def render(rep):
             seen[f["check"]] = seen.get(f["check"], 0) + 1
         for k, n in sorted(seen.items(), key=lambda kv: -kv[1]):
             add(f"  {k} ×{n}")
+        add("")
+
+    if rep.get("parked"):
+        add(f"## Parking lot — below the table ({len(rep['parked'])})")
+        add("  Noticed during play, deliberately not chased during play.")
+        for d in rep["parked"]:
+            who = f" [{d['seat']}]" if d.get("seat") else ""
+            add(f"  • {d['topic']}{who}: {d['detail']}")
         add("")
 
     add("No composite score is produced, by design — see report.py.")

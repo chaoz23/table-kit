@@ -249,6 +249,24 @@ def ingest_message(cfg, ledger, msg, keep_text=False):
             roll_total=r["total"], roll_label=r["label"], roll_check=r["check"],
             sheet_modifier=r["modifier"], sheet_id=(seat.sheet_id if seat else None),
             via=via))
+        # Free internal oracle, no dependencies: the same check on the same
+        # sheet should carry the same modifier all night. When it does not,
+        # either something changed in play (a buff, an item, a level) or one
+        # of the readings is wrong. Either way it is a below-the-table
+        # question, so it gets parked rather than raised.
+        if r["check"] and r["modifier"] is not None:
+            for prev in ledger.read(etype="act"):
+                if (prev.get("roll_check") == r["check"]
+                        and prev.get("actor") == (seat.display if seat else sid)
+                        and prev.get("sheet_modifier") is not None
+                        and prev["sheet_modifier"] != r["modifier"]):
+                    written.append(ledger.append(
+                        "qa.delta", ts=ts, topic="modifier_drift",
+                        seat=sid, check=r["check"],
+                        detail=f"{r['check']} was {prev['sheet_modifier']:+d} "
+                               f"earlier and {r['modifier']:+d} now",
+                        observed=r["modifier"], previous=prev["sheet_modifier"]))
+                    break
     # Note what is NOT here: no scan of the player's words for tokens or
     # keywords. Inbound text is data about the table, never a command
     # surface. Signals are recorded deliberately by a classifier or by the

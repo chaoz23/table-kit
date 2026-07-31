@@ -63,6 +63,10 @@ SCHEMA = {
     "qa.inbound":    ("seat", "chars"),
     "qa.listener":   ("state",),
     "qa.command":    ("cmd", "ok"),
+    # Parked for below-the-table investigation. Never interrupts play, never
+    # accuses anyone, never blocks. A discrepancy noticed mid-session is worth
+    # exactly one line in a list and zero seconds of the evening.
+    "qa.delta":      ("topic", "detail"),
     # --- qc: is the refereeing correct --------------------------------
     "qc.finding": ("check", "detail"),
     "qc.pass":    ("checks",),

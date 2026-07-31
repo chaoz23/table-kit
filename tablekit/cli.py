@@ -24,7 +24,7 @@ from . import detector, pairs, report, ux, uxr
 from .config import ConfigError, load as load_config
 from .events import SCHEMA, Ledger, PAIR_KINDS, SchemaError
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 USAGE = """tablekit — instrumentation for a live hybrid table
 
@@ -39,6 +39,8 @@ USAGE = """tablekit — instrumentation for a live hybrid table
     tablekit turn --seat S [--wait N]          a seat got the floor
     tablekit signal --seat S --kind pacing --quote "<their words>"
                                                record an inferred signal
+    tablekit park "<what looked off>" [--topic X]   park it, keep playing
+    tablekit park --list | --done "<detail>"    the standing issues list
     tablekit qc [--state FILE] [--record]      run the checks
     tablekit pairs                             what is still open
     tablekit sweep                             expire what has timed out
@@ -295,6 +297,55 @@ def cmd_turn(args):
     return 0
 
 
+def cmd_park(args):
+    """Park something for below-the-table investigation.
+
+    Deliberately the cheapest command here: one line, no interruption, no
+    judgment. Anything noticed mid-session that is not worth stopping for —
+    a number that looked off, a rule that felt wrong, a derivation to check
+    against the sheet — belongs in a list rather than in the GM's head, where
+    it will not survive the evening.
+    """
+    topic = _flag(args, "--topic", "note")
+    show = _flag(args, "--list", False, takes_value=False)
+    done = _flag(args, "--done")
+    cfg, led = _ctx(args)
+    lot = Ledger(os.path.join(cfg.data_dir if cfg else ".", "parked.jsonl"))
+
+    if show:
+        items = lot.read(etype="qa.delta")
+        closed = {r.get("detail") for r in lot.read(etype="qa.command")
+                  if r.get("cmd") == "park_done"}
+        open_items = [i for i in items if i.get("detail") not in closed]
+        if not open_items:
+            print("parking lot empty")
+            return 0
+        for i in open_items:
+            when = time.strftime("%m-%d", time.localtime(i["ts"]))
+            print(f"  [{when}] {i.get('topic')}: {i.get('detail')}")
+        return 0
+
+    if done:
+        lot.append("qa.command", cmd="park_done", ok=True, detail=done)
+        print(f"closed: {done}")
+        return 0
+
+    detail = " ".join(args).strip()
+    if not detail:
+        print('park: needs something to park, e.g. park --topic modifier '
+              '"DDB says Initiative +6, we derive +5"\n'
+              "       park --list   see what is open\n"
+              '       park --done "<the detail>"   close one', file=sys.stderr)
+        return 2
+    # Both places on purpose: the session file so tonight's report shows it in
+    # context, and a persistent lot so it is still there next week. An issues
+    # list that resets every session is not an issues list.
+    led.append("qa.delta", topic=topic, detail=detail)
+    lot.append("qa.delta", topic=topic, detail=detail)
+    print(f"parked [{topic}]: {detail}")
+    return 0
+
+
 def cmd_qc(args):
     state_path = _flag(args, "--state")
     do_record = _flag(args, "--record", False, takes_value=False)
@@ -376,7 +427,8 @@ COMMANDS = {
     "inbound": cmd_inbound, "roll": cmd_roll, "consumed": cmd_consumed,
     "checkin": cmd_checkin, "turn": cmd_turn, "signal": cmd_signal,
     "debrief": cmd_debrief, "qc": cmd_qc, "pairs": cmd_pairs,
-    "sweep": cmd_sweep, "report": cmd_report, "schema": cmd_schema,
+    "sweep": cmd_sweep, "park": cmd_park, "report": cmd_report,
+    "schema": cmd_schema,
 }
 
 

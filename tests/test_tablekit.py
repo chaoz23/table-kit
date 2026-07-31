@@ -608,6 +608,42 @@ class TestCLI(TempLedger):
         self.led.append("ux.beat", words=900, chunks=9)
         self.assertEqual(self.run_cli("qc"), 1)
 
+    def test_park_writes_to_both_session_and_standing_list(self):
+        """An issues list that resets every session is not an issues list."""
+        cfg_path = os.path.join(self.dir, "table.json")
+        with open(cfg_path, "w") as f:
+            json.dump(cfg_dict(data_dir=self.dir), f)
+        common = ["--ledger", self.led.path, "--config", cfg_path]
+        code = cli.main(["park", "--topic", "modifier",
+                         "DDB says Initiative +6, we derive +5"] + common)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.led.read(etype="qa.delta")), 1)
+        standing = Ledger(os.path.join(self.dir, "parked.jsonl"))
+        self.assertEqual(len(standing.read(etype="qa.delta")), 1)
+
+    def test_park_list_and_done(self):
+        cfg_path = os.path.join(self.dir, "table.json")
+        with open(cfg_path, "w") as f:
+            json.dump(cfg_dict(data_dir=self.dir), f)
+        common = ["--ledger", self.led.path, "--config", cfg_path]
+        cli.main(["park", "hexblade attack modifier looks off"] + common)
+        self.assertEqual(cli.main(["park", "--list"] + common), 0)
+        self.assertEqual(
+            cli.main(["park", "--done", "hexblade attack modifier looks off"]
+                     + common), 0)
+
+    def test_park_needs_something_to_park(self):
+        self.assertEqual(self.run_cli("park"), 2)
+
+    def test_parked_items_reach_the_report(self):
+        self.led.append("qa.delta", topic="modifier",
+                        detail="Initiative +6 vs derived +5")
+        for i in range(4):
+            self.led.append("ux.beat", words=10, chunks=1)
+        rep = report.build(self.led, self.cfg)
+        self.assertEqual(len(rep["parked"]), 1)
+        self.assertIn("Parking lot", report.render(rep))
+
     def test_schema_emits(self):
         self.assertEqual(self.run_cli("schema"), 0)
 
