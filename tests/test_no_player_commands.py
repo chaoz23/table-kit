@@ -98,6 +98,17 @@ class TestNoPlayerCommandSurface(unittest.TestCase):
                     f"{rel} advertises {tok} — players are never given a "
                     "command syntax (see tablekit/uxr.py)")
 
+    def test_machine_descriptors_carry_no_stale_marker_language(self):
+        """tool.json and llms.txt describe the CURRENT surface to agents and
+        indexers. Prose about the removed vocabulary there is not history, it
+        is a wrong description of what the tool does. (Prose docs may discuss
+        it — saying "there is no marker card" is the point.)"""
+        for rel in ("tool.json", "llms.txt"):
+            with open(os.path.join(ROOT, rel)) as f:
+                text = f.read().lower()
+            self.assertNotIn("marker", text,
+                             f"{rel} still describes the cut marker vocabulary")
+
     def test_docs_do_not_instruct_players_to_type_anything(self):
         """A softer net for phrasings that invite syntax without a bang."""
         bad = re.compile(r"players? (?:can |should |may )?type", re.I)

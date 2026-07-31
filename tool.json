@@ -6,7 +6,7 @@
   "subcommands": {
    "init [path]": "Write a starter table.json. Exit 2 if the file exists.",
    "beat \"<text>\" [--cue SEAT] [--chunks N]": "Record a GM beat; opens a cue pair and checks the cue is deliverable. Exit 1 if the cue would be dropped in transit.",
-   "inbound --seat S --text \"...\"": "Record what a seat said; extracts UXR markers, closes matching cue/checkin pairs.",
+   "inbound --seat S --text \"...\"": "Record what a seat said (who spoke and how much; prose is not stored by default) and close any cue/checkin pair it resolves. Player text is never parsed for commands or keywords.",
    "roll --seat S \"<what for>\"": "Open a roll outcome pair.",
    "consumed <pair-id> [--outcome ...]": "Close a pair. Exit 2 if the id is not open.",
    "checkin --seat S": "Record checking on a quiet seat; closes when they next speak.",
@@ -15,7 +15,7 @@
    "pairs [--json]": "List outcome pairs still open.",
    "sweep": "Close pairs past their TTL with named outcomes. Exit 1 if any expired.",
    "report [--json] [--out FILE]": "Post-session report. Exit 0 clean, 1 defects, 2 not enough data.",
-   "schema": "Event schema, pair kinds, marker vocabulary and exit codes as JSON.",
+   "schema": "Event schema, pair kinds, signal buckets and exit codes as JSON.",
    "signal --seat S --kind pacing --quote \"<their words>\"": "Record a signal inferred from what a player already said. Buckets: pacing, floor, comprehension, resonance, spotlight, continuity. The quote is mandatory - an inference without evidence cannot be audited. Advisory always; can never become a defect.",
    "debrief": "With no arguments, print the plain-English close-out questions to ask in your own words. With --seat/--q/--a, record an answer."
   }
