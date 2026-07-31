@@ -427,6 +427,37 @@ class TestTypedRolls(Base):
                          {"typed": 1})
 
 
+class TestIngestEmits(Base):
+    """A recorder that writes to a file and says nothing is half the job."""
+
+    def test_speech_emits_a_readable_line(self):
+        msg = {"id": "e1", "author": "Rowan", "content": "I go slow, watching the water"}
+        evs = ingest.ingest_message(self.cfg, self.led, msg)
+        line = ingest.summarize(self.cfg, self.led, msg, evs)
+        self.assertEqual(line, "Rowan: I go slow, watching the water")
+
+    def test_a_relayed_roll_emits_the_total(self):
+        cfg = TableConfig(dict(CFG, data_dir=self.dir,
+                               transport={"roll_relay_bots": ["Beyond 20"]}))
+        msg = {"id": "e2", "author": "Beyond 20", "content": "",
+               "embeds": [{"title": "Perception (+3)",
+                           "author": {"name": "Rowan of the Ash"},
+                           "fields": [{"name": ":one::seven:", "value": "1d20 + 3"}]}]}
+        evs = ingest.ingest_message(cfg, self.led, msg)
+        self.assertEqual(ingest.summarize(cfg, self.led, msg, evs),
+                         "Rowan rolled Perception: 17 [Beyond 20]")
+
+    def test_nothing_ingested_emits_nothing(self):
+        msg = {"author": "the gm bot", "content": "my own beat"}
+        evs = ingest.ingest_message(self.cfg, self.led, msg)
+        self.assertIsNone(ingest.summarize(self.cfg, self.led, msg, evs))
+
+    def test_long_lines_are_truncated_for_a_notification(self):
+        msg = {"id": "e3", "author": "Rowan", "content": "x" * 500}
+        evs = ingest.ingest_message(self.cfg, self.led, msg)
+        self.assertLessEqual(len(ingest.summarize(self.cfg, self.led, msg, evs)), 250)
+
+
 class TestEngineTap(Base):
     def test_tap_writes_new_log_lines_once(self):
         state = {"log": ["[round 1] Rowan hits", "[round 1] Goblin falls"],

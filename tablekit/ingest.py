@@ -315,6 +315,36 @@ def ingest_message(cfg, ledger, msg, keep_text=False):
     return written
 
 
+def summarize(cfg, ledger, msg, events):
+    """One compact line per inbound message, for a human or a monitor.
+
+    A recorder that writes to a file and says nothing is only half the job:
+    it makes the evening auditable afterwards without making anyone aware of
+    it now. This is the other half — the line that can become a notification,
+    so the GM finds out a seat spoke without having to think to go and look.
+    """
+    if not events:
+        return None
+    inbound = next((e for e in events if e["type"] == "qa.inbound"), None)
+    if not inbound:
+        return None
+    seat = inbound.get("seat")
+    disp = seat
+    if cfg:
+        s = cfg.seat(seat)
+        if s:
+            disp = s.display
+    roll = next((e for e in events if e.get("roll_total") is not None), None)
+    if roll:
+        return (f"{disp} rolled {roll.get('roll_check') or 'a die'}: "
+                f"{roll['roll_total']}"
+                + (f" [{roll['via']}]" if roll.get("via") else ""))
+    text = (msg.get("content") or "").strip().replace("\n", " ")
+    if len(text) > 240:
+        text = text[:237] + "..."
+    return f"{disp}: {text}" if text else f"{disp} posted something with no text"
+
+
 def main(argv=None):
     args = list(argv if argv is not None else sys.argv[1:])
     keep_text = "--keep-text" in args
@@ -341,7 +371,13 @@ def main(argv=None):
                 # it — a silent ingest is indistinguishable from a dead one.
                 print(line, file=sys.stderr)
                 continue
-            ingest_message(cfg, ledger, msg, keep_text)
+            evs = ingest_message(cfg, ledger, msg, keep_text)
+            line = summarize(cfg, ledger, msg, evs)
+            if line:
+                # stdout is the event stream: one line per thing the GM needs
+                # to know about. Flushed immediately — a notification that
+                # arrives when the buffer fills is not a notification.
+                print(line, flush=True)
     except KeyboardInterrupt:
         pass
     finally:
