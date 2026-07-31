@@ -51,8 +51,21 @@ class ConfigError(ValueError):
     pass
 
 
+#: Who throws the dice for a seat. `self` is the default and the right one for
+#: almost everyone — taking the dice off a player removes the best moment in
+#: the game. `dm` is an opt-out that matters to a real minority: accessibility,
+#: players who find being put on the spot stressful, and players who are here
+#: for the story and not the arithmetic.
+#:
+#: It lives here rather than in the GM's memory because a preference the GM has
+#: to remember gets forgotten, and forgetting it is invisible — the player is
+#: simply put on the spot and says nothing about it.
+ROLL_MODES = ("self", "dm")
+
+
 class Seat:
-    __slots__ = ("id", "display", "kind", "mention", "aliases", "player")
+    __slots__ = ("id", "display", "kind", "mention", "aliases", "player",
+                 "rolls")
 
     def __init__(self, d):
         self.id = d.get("id")
@@ -66,6 +79,11 @@ class Seat:
         self.mention = d.get("mention")
         self.aliases = [a.lower() for a in d.get("aliases", [])]
         self.player = d.get("player")
+        self.rolls = d.get("rolls", "self")
+        if self.rolls not in ROLL_MODES:
+            raise ConfigError(
+                f"seat {self.id}: rolls must be one of {', '.join(ROLL_MODES)} "
+                f"(got {self.rolls!r})")
         if self.kind == "agent" and not self.mention:
             raise ConfigError(
                 f"seat {self.id} is an agent seat with no 'mention'. Agent chat "
@@ -81,7 +99,11 @@ class Seat:
     def as_dict(self):
         return {"id": self.id, "display": self.display, "kind": self.kind,
                 "mention": self.mention, "aliases": self.aliases,
-                "player": self.player}
+                "player": self.player, "rolls": self.rolls}
+
+    @property
+    def rolls_own(self):
+        return self.rolls == "self"
 
 
 class TableConfig:

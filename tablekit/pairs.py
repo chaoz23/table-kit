@@ -55,11 +55,19 @@ def new_id(kind, ts=None):
     return f"{kind}-{ms}-{next(_SEQ):04x}-{os.urandom(2).hex()}"
 
 
-def open_pair(ledger, pair, pid, seat=None, detail=None, beat=None, ts=None):
+def open_pair(ledger, pair, pid, seat=None, detail=None, beat=None, ts=None,
+              dc=None, rolled_by=None):
+    """Open an intent.
+
+    `dc` is recorded on roll pairs whether or not the number was ever said out
+    loud. Stating a DC is a play decision; recording one is an instrumentation
+    decision, and conflating them costs us the only thing that makes
+    fail-forward and several other craft rules falsifiable at our own table.
+    """
     if pair not in PAIR_KINDS:
         raise ValueError(f"unknown pair kind {pair!r}")
     return ledger.append("out.open", ts=ts, pair=pair, id=pid, seat=seat,
-                         detail=detail,
+                         detail=detail, dc=dc, rolled_by=rolled_by,
                          beat=beat if beat is not None else ledger.current_beat())
 
 

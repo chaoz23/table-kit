@@ -570,6 +570,30 @@ class TestCLI(TempLedger):
                          "--ledger", self.led.path, "--config", cfg_path])
         self.assertEqual(code, 1)
 
+    def test_roll_records_the_dc_without_stating_it(self):
+        """Stating a DC is a play decision; recording one is instrumentation.
+        Conflating them costs the only thing that makes fail-forward and
+        several other craft rules falsifiable at our own table."""
+        cfg_path = os.path.join(self.dir, "table.json")
+        with open(cfg_path, "w") as f:
+            json.dump(cfg_dict(data_dir=self.dir), f)
+        cli.main(["roll", "--seat", "rowan", "--dc", "23", "force the portcullis",
+                  "--ledger", self.led.path, "--config", cfg_path])
+        [rec] = self.led.read(etype="out.open")
+        self.assertEqual(rec["dc"], 23)
+
+    def test_roll_surfaces_a_seats_opt_out(self):
+        d = cfg_dict(data_dir=self.dir)
+        d["seats"][0]["rolls"] = "dm"
+        cfg_path = os.path.join(self.dir, "table.json")
+        with open(cfg_path, "w") as f:
+            json.dump(d, f)
+        code = cli.main(["roll", "--seat", "rowan", "climb",
+                         "--ledger", self.led.path, "--config", cfg_path])
+        self.assertEqual(code, 0)
+        [rec] = self.led.read(etype="out.open")
+        self.assertEqual(rec["rolled_by"], "dm")
+
     def test_roll_and_consumed_roundtrip(self):
         self.assertEqual(self.run_cli("roll", "--seat", "rowan", "climb"), 0)
         pid = pairs.open_now(self.led, "roll")[0]["id"]

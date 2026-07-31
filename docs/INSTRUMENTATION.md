@@ -154,6 +154,15 @@ turns. A pair records both halves as one thing.
 |---|---|---|
 | `cue` | a beat addresses a seat | `taken` / `expired` |
 | `roll` | a roll is called for | `consumed` / `unconsumed` |
+
+Roll pairs carry `dc` and `rolled_by`. **Recording a DC is not stating one** —
+difficulty is conveyed in the fiction by default, and the number is said out
+loud only when it is a reachable long shot you were otherwise going to refuse.
+But it is recorded every time, because a known DC is what converts fail-forward
+and several other craft rules from unfalsifiable to testable. `rolled_by`
+captures the seat's own preference (`self` by default; `dm` for the minority who
+would rather not roll), so "did this land differently for seats that do not roll
+their own dice" stays an answerable question.
 | `checkin` | a quiet seat is checked on | `returned` / `absent` |
 | `endmarker` | a session ends | `matched` / `diverged` |
 

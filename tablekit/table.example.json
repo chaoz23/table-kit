@@ -15,7 +15,9 @@
    "display": "Rowan",
    "kind": "human",
    "player": "a human player",
-   "aliases": ["ro"]
+   "aliases": ["ro"],
+   "rolls": "self",
+   "_rolls_comment": "\"self\" (default) means this player rolls their own dice, which is right for almost everyone. \"dm\" is an opt-out that matters to a real minority — accessibility, players who find being put on the spot stressful, players here for the story rather than the arithmetic. It lives in config rather than the GM's memory because a forgotten preference is invisible: the player is simply put on the spot and says nothing."
   },
   {
    "id": "vesh",

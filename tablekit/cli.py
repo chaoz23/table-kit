@@ -24,7 +24,7 @@ from . import detector, pairs, report, ux, uxr
 from .config import ConfigError, load as load_config
 from .events import SCHEMA, Ledger, PAIR_KINDS, SchemaError
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 USAGE = """tablekit — instrumentation for a live hybrid table
 
@@ -33,7 +33,7 @@ USAGE = """tablekit — instrumentation for a live hybrid table
   during play
     tablekit beat "<text>" [--cue SEAT] [--chunks N] [--kind scene|combat|ooc]
     tablekit inbound --seat S --text "<what they said>"
-    tablekit roll --seat S "<what for>"        called for a roll
+    tablekit roll --seat S "<what for>" [--dc N]   called for a roll
     tablekit consumed <pair-id> [--outcome consumed]
     tablekit checkin --seat S                  checked on a quiet seat
     tablekit turn --seat S [--wait N]          a seat got the floor
@@ -227,11 +227,29 @@ def cmd_inbound(args):
 
 def cmd_roll(args):
     seat = _flag(args, "--seat")
+    dc = _flag(args, "--dc")
     cfg, led = _ctx(args)
     detail = args[0] if args else "roll called"
+    s = cfg.seat(seat) if (cfg and seat) else None
     pid = pairs.new_id("roll")
-    pairs.open_pair(led, "roll", pid, seat=_seat_id(cfg, seat), detail=detail)
-    print(f"roll pair {pid} open — close it with: tablekit consumed {pid}")
+    pairs.open_pair(led, "roll", pid, seat=_seat_id(cfg, seat), detail=detail,
+                    dc=int(dc) if dc else None,
+                    rolled_by=(s.rolls if s else None))
+    out = [f"roll pair {pid} open — close it with: tablekit consumed {pid}"]
+    if dc:
+        out.append(f"  DC {dc} recorded (recording is not stating — say the "
+                   "number only when it is a reachable long shot)")
+    else:
+        out.append("  no DC recorded — pass --dc so success/fail stays "
+                   "labelable later")
+    # The preference surfaces here, at the only moment it can still be acted
+    # on. A per-seat preference the GM has to remember gets forgotten, and
+    # forgetting it is invisible: the player is put on the spot and says
+    # nothing about it.
+    if s and not s.rolls_own:
+        out.append(f"  {s.display} does not roll their own dice — roll it "
+                   "yourself, in the open, and still give them the reveal")
+    print("\n".join(out))
     return 0
 
 
