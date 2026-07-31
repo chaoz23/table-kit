@@ -27,6 +27,11 @@ jobs:
           test $code -eq 1 || { echo "demo should exit 1 (it contains defects on purpose), got $code"; exit 1; }
           grep -q "undeliverable_cue" /tmp/demo.txt
           grep -q "seat_quiet" /tmp/demo.txt
+      - name: The table is never given a command syntax
+        run: |
+          ! tablekit schema | grep -q '"!'
+          ! grep -rEn '"!(huh|wait|yes|drag|mine|off)' README.md llms.txt tool.json docs/QUICKSTART.md
+
       - name: The cause is reported before the symptom it caused
         run: |
           cause=$(grep -n "undeliverable_cue" /tmp/demo.txt | head -1 | cut -d: -f1)
@@ -39,7 +44,7 @@ jobs:
           pip install dist/*.whl
           tablekit --version
           tablekit schema > /dev/null
-          tablekit markers > /dev/null
+          tablekit debrief > /dev/null
 
   node:
     runs-on: ubuntu-latest
