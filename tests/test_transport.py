@@ -262,6 +262,36 @@ class TestRealBeyond20Payload(unittest.TestCase):
         seat, _ = ingest.attribute_relay(cfg, REAL_BEYOND20)
         self.assertEqual(seat, "william")
 
+    def test_the_sheets_own_modifier_is_captured(self):
+        """Every relayed roll carries the number the character sheet computed,
+        for a named check, on a named sheet. Anything deriving modifiers from
+        that same sheet can be checked against it for free, on every roll —
+        but only if the observation was recorded while it happened."""
+        parsed = ingest.parse_relay_roll(REAL_BEYOND20)
+        self.assertEqual(parsed["check"], "Initiative")
+        self.assertEqual(parsed["modifier"], 6)
+
+    def test_negative_modifiers_are_read_correctly(self):
+        msg = json.loads(json.dumps(REAL_BEYOND20))
+        msg["embeds"][0]["title"] = "Perception (-1)"
+        parsed = ingest.parse_relay_roll(msg)
+        self.assertEqual((parsed["check"], parsed["modifier"]), ("Perception", -1))
+
+    def test_a_title_without_a_modifier_still_yields_the_check(self):
+        msg = json.loads(json.dumps(REAL_BEYOND20))
+        msg["embeds"][0]["title"] = "Hex Blade Attack"
+        parsed = ingest.parse_relay_roll(msg)
+        self.assertEqual(parsed["check"], "Hex Blade Attack")
+        self.assertIsNone(parsed["modifier"])
+
+    def test_observed_modifier_reaches_the_ledger_for_later_comparison(self):
+        pairs.open_pair(self.led, "roll", "r1", seat="william", detail="init")
+        ingest.ingest_message(self.cfg, self.led, REAL_BEYOND20)
+        [act] = self.led.read(etype="act")
+        self.assertEqual(act["sheet_modifier"], 6)
+        self.assertEqual(act["roll_check"], "Initiative")
+        self.assertEqual(act["sheet_id"], "93177801")
+
     def test_the_roll_lands_in_the_play_ledger(self):
         pairs.open_pair(self.led, "roll", "r1", seat="william", detail="initiative")
         ingest.ingest_message(self.cfg, self.led, REAL_BEYOND20)

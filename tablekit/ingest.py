@@ -71,16 +71,33 @@ def _embed_blob(msg):
 
 
 def parse_relay_roll(msg):
-    """Pull the total and the breakdown out of a relayed roll embed.
+    """Pull the total, the breakdown, and the SHEET'S OWN MODIFIER out of a
+    relayed roll embed.
 
-    Returns `{"label", "total", "breakdown"}` with whatever could be read.
-    Spoiler bars are stripped — a table that wraps rolls in `||` still wants
-    the number recorded.
+    The modifier is the interesting one. A relayed roll carries the number the
+    character sheet computed — "Initiative (+6)" — for a named check, on a
+    named sheet. Anything that derives modifiers from the same sheet can be
+    checked against it, for free, on every roll of every session, without
+    anyone doing extra work.
+
+    That is a real correctness oracle and it is worth capturing even if
+    nothing consumes it yet: the comparison can be run after the session, but
+    only if the observation was recorded during it.
+
+    Returns `{"label", "check", "modifier", "total", "breakdown"}`.
     """
-    out = {"label": None, "total": None, "breakdown": None}
+    out = {"label": None, "check": None, "modifier": None,
+           "total": None, "breakdown": None}
     for e in (msg.get("embeds") or []):
         if e.get("title") and not out["label"]:
             out["label"] = str(e["title"])
+            # "Initiative (+6)" / "Perception (-1)" / "Athletics (+3)"
+            m = re.match(r"\s*(.+?)\s*\(\s*([+-]\s*\d+)\s*\)\s*$", out["label"])
+            if m:
+                out["check"] = m.group(1).strip()
+                out["modifier"] = int(m.group(2).replace(" ", ""))
+            else:
+                out["check"] = out["label"].strip()
         for f in (e.get("fields") or []):
             if out["total"] is None:
                 out["total"] = _emoji_number(f.get("name", ""))
@@ -229,7 +246,9 @@ def ingest_message(cfg, ledger, msg, keep_text=False):
             "act", ts=ts, actor=(seat.display if seat else sid),
             text=f"{r['label'] or 'roll'}: {r['total'] if r['total'] is not None else '?'}"
                  + (f" ({r['breakdown']})" if r["breakdown"] else ""),
-            roll_total=r["total"], roll_label=r["label"], via=via))
+            roll_total=r["total"], roll_label=r["label"], roll_check=r["check"],
+            sheet_modifier=r["modifier"], sheet_id=(seat.sheet_id if seat else None),
+            via=via))
     # Note what is NOT here: no scan of the player's words for tokens or
     # keywords. Inbound text is data about the table, never a command
     # surface. Signals are recorded deliberately by a classifier or by the
