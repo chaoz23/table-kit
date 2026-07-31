@@ -14,9 +14,11 @@ two implementations of "what counts as a marker" drifting apart.
 What ingestion does per message:
 
   * records `qa.inbound` — who spoke and how much, never the prose itself
-  * extracts any UXR markers and anchors them to the current beat
   * closes the outcome pairs that this message resolves (a cue answered, a
     checked-on seat returning)
+
+It deliberately does **not** parse player text for commands, tokens or
+keywords. Whatever a player types is dialogue, not syntax.
 
 Player prose is not stored by default. The kit needs to know that a seat spoke
 and roughly how much; it does not need a transcript, and quietly accumulating
@@ -27,7 +29,7 @@ the record.
 import json
 import sys
 
-from . import pairs, uxr
+from . import pairs
 from .config import ConfigError, load as load_config
 from .events import Ledger
 
@@ -65,7 +67,10 @@ def ingest_message(cfg, ledger, msg, keep_text=False):
     written = [ledger.append("qa.inbound", ts=ts, seat=sid, chars=len(text),
                              words=len(text.split()), msg_id=msg_id,
                              text=(text[:400] if keep_text else None))]
-    written += uxr.record(ledger, sid, text, ts=ts)
+    # Note what is NOT here: no scan of the player's words for tokens or
+    # keywords. Inbound text is data about the table, never a command
+    # surface. Signals are recorded deliberately by a classifier or by the
+    # debrief — see tablekit.uxr.
     for kind, outcome in (("cue", "taken"), ("checkin", "returned")):
         for p in pairs.open_now(ledger, kind):
             if p.get("seat") == sid:
@@ -101,11 +106,7 @@ def main(argv=None):
                 # it — a silent ingest is indistinguishable from a dead one.
                 print(line, file=sys.stderr)
                 continue
-            evs = ingest_message(cfg, ledger, msg, keep_text)
-            marks = [e for e in evs if e["type"] == "uxr.marker"]
-            if marks:
-                print(f"{msg.get('author')}: "
-                      + ", ".join("!" + m["marker"] for m in marks))
+            ingest_message(cfg, ledger, msg, keep_text)
     except KeyboardInterrupt:
         pass
     finally:

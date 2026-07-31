@@ -1,7 +1,7 @@
 # Quickstart
 
-A running instrumented table in about ten minutes. You can do the first two
-steps with no chat platform at all.
+A running instrumented table in about ten minutes. The first two steps need no
+chat platform at all.
 
 ## 1. See what it produces
 
@@ -29,15 +29,11 @@ the literal mention its chat platform needs**:
 Leave it out and the config is refused at load, on purpose — see
 [TRANSPORT.md](TRANSPORT.md) for the evening that rule cost.
 
-## 3. Give the table the marker card
+## 3. Nothing to teach the table
 
-```bash
-tablekit markers
-```
-
-Paste that into the channel and pin it. Players type these inline, mid-scene,
-without stopping play. If nobody uses them the report will say so — "no markers
-dropped" is reported as an absence of data, not an absence of friction.
+There is no marker card to pin, no syntax to explain, no commands for anyone to
+learn. That is the design, not an omission — see the README. People talk the
+way they were always going to talk, and the GM records what it understood.
 
 ## 4. Run a session
 
@@ -45,13 +41,25 @@ Without a chat platform, drive it by hand:
 
 ```bash
 tablekit beat "The causeway is coming up out of the water. Rowan, you are first onto the wet stone." --cue rowan
-tablekit inbound --seat rowan --text "I go slow, watching the water line. !yes"
+tablekit inbound --seat rowan --text "I go slow, watching the water line."
 tablekit roll --seat rowan "Perception to place the sound"
-tablekit consumed roll-1785440000
+tablekit consumed roll-1785440000-0000-3f2a
 tablekit qc                 # between beats — one line, or a defect
 ```
 
-With Discord, let the listener do the inbound half:
+When someone says something that tells you how the evening is landing, record
+it with their own words attached:
+
+```bash
+tablekit signal --seat rowan --kind pacing --quote "can we get to the fight"
+tablekit signal --seat vesh  --kind spotlight --quote "finally, this is what she does"
+```
+
+Buckets: `pacing`, `floor`, `comprehension`, `resonance`, `spotlight`,
+`continuity`. The quote is mandatory — an inference nobody can check against
+what was actually said is indistinguishable from one the machine invented.
+
+With Discord, let the listener handle the inbound half:
 
 ```bash
 export TABLE_BOT_TOKEN=...
@@ -71,6 +79,18 @@ post.post(cfg, led, "Vesh, the water has gone quiet around your ankles.", cue="v
 
 ## 5. Close the evening
 
+Ask the close-out questions — in your own words, as part of the ending, not as
+a form:
+
+```bash
+tablekit debrief            # prints what is worth asking
+tablekit debrief --seat rowan --q "anything drag tonight?" --a "the chapel bit went long"
+```
+
+This half matters more than the inference does. A GM that did not notice
+friction cannot have recorded any, so asking is the only check on its own blind
+spots.
+
 ```bash
 tablekit sweep      # name the outcomes of anything still hanging
 tablekit report     # exit 0 clean, 1 findings, 2 not enough happened
@@ -78,9 +98,6 @@ tablekit report --json --out reports/session-1.json
 ```
 
 ## Between sessions
-
-The report's **ask-at-the-break** list is the highest-value part and it decays
-fast — ask those questions while people still remember the moment.
 
 After three or four sessions you will have enough closed outcome pairs to
 retune the thresholds in `table.json` against your own table instead of the

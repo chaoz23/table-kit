@@ -19,14 +19,18 @@ partial accounts of the same evening.
 | `qa`  | did the machinery work?        | the kit, automatically   |
 | `qc`  | was the refereeing correct?    | checks, automatically    |
 | `ux`  | what was the seat's experience?| timings, automatically   |
-| `uxr` | how did it *feel* from a seat? | **elicited from players**|
+| `uxr` | how did it *feel* from a seat? | **inferred + asked**     |
 
 The split between `ux` and `uxr` is not cosmetic. Everything in `ux` is
 derivable from the record afterwards. Nothing in `uxr` is: whether a beat
 landed, whether a player was bored, whether a word was understood, and
 whether someone got to do the thing their character is *for* leave no trace
-in a transcript. They have to be asked for while the table is still sitting
-there, which is why the marker vocabulary is one token long.
+in a transcript.
+
+`uxr` records are inferred from what people already said, or asked for in
+plain English at session close. **Players are never given a command syntax to
+produce them** — see `tablekit.uxr` for why that is a hard product constraint
+rather than a preference.
 
 A fifth lane, `out`, records outcome PAIRS — an intent opened and later
 closed with what actually happened. Those are the only records in the file
@@ -68,7 +72,7 @@ SCHEMA = {
     "ux.turn":      ("seat", "wait_s"),
     "ux.seat_idle": ("seat", "idle_s"),
     # --- uxr: elicited, subjective ------------------------------------
-    "uxr.marker":  ("seat", "marker"),
+    "uxr.signal":  ("seat", "signal", "quote", "source"),
     "uxr.debrief": ("seat", "question", "answer"),
     # --- out: outcome pairs (E5) --------------------------------------
     "out.open":  ("pair", "id"),

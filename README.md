@@ -11,71 +11,78 @@ are libraries. The thing that makes them a *table* — the chat transport, the
 session file, the game state, and the instrumentation that turns an evening
 into something you can learn from — is what this repo is.
 
-It is an **example, not a framework**. It is small enough to read in one
-sitting and it expects to be edited.
+It is an **example, not a framework**. Small enough to read in one sitting, and
+it expects to be edited.
 
 ```bash
 pip install tablekit
-tablekit init                 # writes table.json
-tablekit markers              # the card you paste at the table
+tablekit init                      # writes table.json
 python3 examples/demo_session.py   # a whole synthetic session + its report
 ```
 
-## The problem it solves
+## The rule that governs the whole design
 
-Running a hybrid table works fine for about twenty minutes. Then the specific
-failures start, and every one of them is invisible while it is happening:
+**The table speaks English. Nobody at it learns a syntax.**
 
-- **A cue that is never delivered.** Agent chat bridges commonly drop
-  bot-to-bot messages that lack a literal mention. You address an agent seat by
-  name, the message posts, the API returns 200, and the seat never receives it.
-  Nothing errors. You conclude the agent is thinking.
-- **A seat nobody addressed for forty minutes.** Agents will happily carry a
-  scene to its climax while a human player waits for an opening that never
-  comes. Read the transcript afterwards and it looks like a good scene.
-- **A roll called and never consumed.** Someone rolls, the number lands in
-  chat, the moment moves on, and the outcome is never narrated.
-- **A ledger only the GM is checking.** Every player who benefits from an error
-  has an incentive to say nothing about it.
+Text RPGs solved this badly for forty years. Zork and *Moria* and everything
+after them handed you a verb list, because a parser in 1980 could not
+understand a sentence. That vocabulary was never a design choice — it was a
+workaround for a missing capability, and it is exactly what makes those games
+feel like operating a computer instead of sitting with someone who is running a
+world for you.
 
-And underneath all of those, the real one: **a transcript of a great session
-and a transcript of a session everyone endured look about the same.** Whether
-a description landed, whether someone was bored, whether a player got to do
-the thing their character is *for* — none of it leaves a trace.
+The capability is no longer missing. So an agent GM that asks people to learn
+commands has voluntarily reproduced the limitation and thrown away the only
+thing it has over a parser game.
+
+Concretely, in this repo: there are no chat commands, no `!tokens`, no
+keywords, no "advanced mode". Whatever someone writes in the channel is
+dialogue. `tests/test_no_player_commands.py` enforces that, because a stated
+principle drifts and a test does not.
+
+An earlier version of this kit got this wrong — it shipped a six-token feedback
+vocabulary. It was cut in 0.2.0 and the reasoning is preserved in
+`tablekit/uxr.py`.
 
 ## What it does
 
 Everything a session produces goes into **one append-only JSONL file**, which
 is simultaneously the play ledger and the telemetry stream. `dmcheck` can be
-pointed straight at it, with no export step.
+pointed straight at it with no export step.
 
-Four lanes of instrumentation, plus outcome pairs:
-
-| lane  | answers                          | how          |
-|-------|----------------------------------|--------------|
-| `qa`  | did the machinery work?          | automatic    |
-| `qc`  | was the refereeing correct?      | automatic    |
+| lane  | answers                                | how |
+|-------|----------------------------------------|-----|
+| `qa`  | did the machinery work?                | automatic |
+| `qc`  | was the refereeing correct?            | automatic |
 | `ux`  | what did the seat's evening look like? | automatic |
-| `uxr` | how did it *feel* from a seat?   | **players type one token** |
-| `out` | did any of it work?              | intent → payoff pairs |
+| `uxr` | how did it *feel* from a seat?         | inferred from ordinary speech, then asked about at the close |
+| `out` | did any of it actually work?           | intent → payoff pairs |
 
-The `uxr` lane is the one that does not exist anywhere else. Six markers, typed
-inline in chat, no interruption to play:
+### The `uxr` lane
 
-```
-!huh    I did not follow that            !drag   this is slow for me
-!wait   I wanted in, the moment passed    !mine   I got to do my thing
-!yes    that landed                       !off    that contradicts something
-```
+This is the one that does not exist elsewhere, and the one the no-syntax rule
+shapes most. A transcript of a great session and a transcript of a session
+everyone endured look about the same — whether a description landed, whether
+someone was quietly lost, whether a player got to do the thing their character
+exists for, none of it leaves a trace.
 
-They cost nothing to drop mid-scene, they anchor to the beat that caused them,
-and they turn into user stories in the report:
+So it is captured two ways, both of them in plain English:
 
-```
-• As brae, I wanted to follow the scene, but something in it did not parse (beat 6).
-    they said: "what's a gorse"
-    reacting to: "Inside, thirty-one cuts in the doorframe, and the rope is still..."
-```
+**Inferred during play.** "Can we get moving" *is* the signal. The agent GM is
+already reading every line; classification does not need a new interface, it
+needs the GM to record what it already understood. Six internal buckets —
+pacing, floor, comprehension, resonance, spotlight, continuity — never surfaced
+to anyone at the table. Every inferred signal stores the player's own words, so
+the inference is auditable by whoever was in the room.
+
+**Asked at the close.** Two or three questions in your own words, the way any
+decent GM already ends a night. `tablekit debrief` prints them.
+
+The second half is not optional politeness — it is the structural check on the
+first. A GM that does not notice friction cannot record friction, so inference
+alone inherits exactly the blind spots the lane was built to route around. An
+independent model pass over the same transcript (`--source local`) is the other
+check; where it and the GM disagree is itself the interesting part.
 
 ## The report
 
@@ -89,49 +96,42 @@ then the shape of the evening, then whether the plumbing held.
 ```
 ## Defects
   ✗ undeliverable_cue: beat 4: cue addresses agent seat 'Vesh' but does not
-    contain its literal mention <@999...> — likely to be dropped in transit
+    contain its literal mention — likely to be dropped in transit
   ✗ seat_quiet: Vesh has not said anything for 49 minutes and has not been
     checked on
 
-## From the seats (8 markers)
-  Patterns (>= 3 reports — worth acting on):
-    !drag ×3 [pacing] slow for me right now — seats: brae, rowan; beats 6, 7, 7
-  Individual moments (below 3 — a moment, not a tendency):
-    !yes ×2   !mine ×1   !huh ×1   !off ×1
+## From the seats (5 signals)
+  Patterns (>= 3 — worth acting on):
+    - pacing ×3 — this stretch felt slow from that seat; seats: brae, rowan;
+      beats 5, 6, 6 [dm/local]
 
 ## Did it work (outcome pairs)
   cue        3/4 good  (75%)  median 60.0s
   roll       0/1 good  (n=1 — too few to state a rate; counts shown instead)
 ```
 
-Note the order: the undeliverable cue is reported *before* the silence it
-caused. And note what is missing — there is no score at the bottom, and there
+Note the ordering: the undeliverable cue is reported *before* the silence it
+caused. And note what is absent — there is no score at the bottom, and there
 is not going to be one.
 
-## Two rules this kit will not bend
+## Three things this kit will not do
 
-**1. A marker is evidence for a pattern, never a verdict on a beat.**
+**1. Give players a command syntax.** Above. It is a product non-goal, not a
+backlog item.
 
-This is a correction of a real mistake. One player asking "what's a gorse" was
-once read as "unfamiliar words fail at this table," and the rule written from
-it was wrong — their actual position was *"I like the new words, sometimes I
-will have to ask."* One report of friction tells you a moment had friction. It
-does not tell you the cause and it certainly does not generalise to a
-preference. So anything below three occurrences is reported as individual
-moments with their beat numbers, never as a rate or a tendency.
+**2. Let an inference accuse anyone.** Signals classified from speech are
+advisory in every path and can never become a defect. Something a model
+*thought* someone meant does not get to be a finding.
 
-**2. Ambiguity produces silence, not an accusation.**
+**3. State a rate from a handful of observations.** Below three occurrences,
+the report lists individual moments with their beat numbers and refuses to
+describe a tendency. This is a correction of a real error: one player asking
+what a word meant was once generalised into "unfamiliar diction fails at this
+table", and their actual position was the opposite.
 
-Every check requires positive evidence. Silence from the GM is not a finding,
-because a GM deliberately yielding the floor and a GM who has wandered off look
-identical in a log — and at professional tables, the yielded floor is the
-common case by a wide margin. A checker that cries wolf during play gets
-ignored inside twenty minutes, and then it is just noise with a maintenance
-cost.
-
-Findings come in two severities and the difference is load-bearing:
-**defects** are boundary crossings (pass/fail, worth interrupting for);
-**attention** items are dosage readings (real signal, no boundary crossed).
+Findings come in two severities and the difference is load-bearing: **defects**
+are boundary crossings (pass/fail, worth interrupting for); **attention** items
+are dosage readings (real signal, no boundary crossed).
 
 ## Layout
 
@@ -154,8 +154,8 @@ session was fine."
 ## Docs
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md) — a table running in about ten minutes
-- [docs/INSTRUMENTATION.md](docs/INSTRUMENTATION.md) — the four-lane contract,
-  the event schema, and what every default was derived from
+- [docs/INSTRUMENTATION.md](docs/INSTRUMENTATION.md) — the lanes, the event
+  schema, and the provenance of every default
 - [docs/TRANSPORT.md](docs/TRANSPORT.md) — mandatory mentions, the relay tax,
   cursor ownership, and the other things that cost an evening to learn
 - [bootstrap/CORE.md](bootstrap/CORE.md) — if an agent is about to GM for the
@@ -163,9 +163,9 @@ session was fine."
 
 ## For agents
 
-`tool.json` at the repo root describes the command surface. `tablekit schema`
-prints the event schema, pair kinds, marker vocabulary and exit codes as JSON.
-The session file is JSONL with one object per line and a documented type
-registry; reading it needs no library.
+`tool.json` describes the command surface — all of it operator-side, none of it
+touched by anyone at the table. `tablekit schema` prints the event schema,
+signal buckets and exit codes as JSON. The session file is JSONL with one
+object per line and a documented type registry; reading it needs no library.
 
 MIT.

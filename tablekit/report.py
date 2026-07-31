@@ -3,16 +3,17 @@
 There is no composite number at the bottom of this report and there is not
 going to be one. A single "table quality: 78" would be read, believed, and
 optimised against, and it would be a fiction assembled from a handful of
-self-reported markers, some latencies, and a couple of boundary checks. The
+inferred signals, some latencies, and a couple of boundary checks. The
 report's job is to put the evening's evidence where a human can look at it,
 sorted so the parts that are actually load-bearing come first.
 
 What it *will* say plainly:
 
   * every categorical defect, because those are pass/fail
-  * every marker a player dropped, anchored to the beat it was about
-  * the user stories those markers imply, in the seat's own framing
-  * the questions worth asking at the break, and only the ones still unanswered
+  * every signal inferred from what a player said, anchored to the beat it
+    was about and carrying their own words as evidence
+  * the user stories those signals imply, in the seat's own framing
+  * what people actually said when asked at the close
   * outcome-pair results, with rates withheld below a floor
 
 Exit codes follow the family convention: 0 clean, 1 findings to look at,
@@ -34,27 +35,45 @@ MIN_BEATS = 3
 def build(ledger, cfg=None, min_pattern=uxr_mod.MIN_PATTERN):
     rows = ledger.read()
     beats = ledger.beats()
-    markers = [r for r in rows if r.get("type") == "uxr.marker"]
+    signals = [r for r in rows if r.get("type") == "uxr.signal"]
+    debriefs = [r for r in rows if r.get("type") == "uxr.debrief"]
     findings = [r for r in rows if r.get("type") == "qc.finding"]
     beat_text = {i + 1: (b.get("text") or "")[:160] for i, b in enumerate(beats)}
 
-    by_marker = {}
-    for m in markers:
-        by_marker.setdefault(m["marker"], []).append(m)
+    by_signal = {}
+    for m in signals:
+        by_signal.setdefault(m["signal"], []).append(m)
 
-    #: Below the floor, a marker is a moment and not a tendency. The report
+    #: Below the floor, a signal is a moment and not a tendency. The report
     #: says which it is holding, every time, rather than leaving the reader to
     #: guess how much weight the number carries.
     patterns, moments = [], []
-    for name, group in sorted(by_marker.items(), key=lambda kv: -len(kv[1])):
-        info = uxr_mod.MARKERS[name]
-        entry = {"marker": name, "dimension": info["dimension"],
-                 "meaning": info["meaning"], "count": len(group),
+    for name, group in sorted(by_signal.items(), key=lambda kv: -len(kv[1])):
+        info = uxr_mod.SIGNALS[name]
+        entry = {"signal": name, "means": info["means"], "count": len(group),
+                 "positive": name in uxr_mod.POSITIVE,
                  "seats": sorted({g.get("seat") for g in group if g.get("seat")}),
-                 "beats": [g.get("beat") for g in group]}
+                 "beats": [g.get("beat") for g in group],
+                 "sources": sorted({g.get("source", "dm") for g in group})}
         (patterns if len(group) >= min_pattern else moments).append(entry)
 
-    defects = [f for f in findings if f.get("severity") == "defect"]
+    # Deduplicate. QC runs between beats, so a standing defect is recorded
+    # once per run — by the end of a session that is dozens of copies of one
+    # problem. It is one defect that persisted, and saying so (with how many
+    # checks it survived) is more useful than listing it thirty times.
+    seen, defects = {}, []
+    for f in findings:
+        if f.get("severity") != "defect":
+            continue
+        key = (f.get("check"), f.get("seat"), f.get("detail"))
+        if key in seen:
+            seen[key]["seen"] += 1
+            continue
+        entry = {"check": f["check"], "detail": f.get("detail"),
+                 "seat": f.get("seat"), "evidence": f.get("evidence"),
+                 "seen": 1}
+        seen[key] = entry
+        defects.append(entry)
     return {
         "table": cfg.name if cfg else None,
         "enough_data": len(beats) >= MIN_BEATS,
@@ -62,19 +81,20 @@ def build(ledger, cfg=None, min_pattern=uxr_mod.MIN_PATTERN):
         "seats": ux_mod.seat_stats(ledger, cfg),
         "transport": ux_mod.transport_stats(ledger),
         "qc": {
-            "defects": [{"check": f["check"], "detail": f.get("detail"),
-                         "seat": f.get("seat"), "evidence": f.get("evidence")}
-                        for f in defects],
+            "defects": defects,
             "attention": [{"check": f["check"], "detail": f.get("detail")}
                           for f in findings if f.get("severity") != "defect"],
         },
         "uxr": {
-            "markers_total": len(markers),
+            "signals_total": len(signals),
             "patterns": patterns,
             "moments": moments,
             "floor": min_pattern,
-            "stories": uxr_mod.stories(markers, beat_text),
-            "followups": uxr_mod.followups(markers),
+            "stories": uxr_mod.stories(signals, beat_text),
+            "debriefs": [{"seat": d.get("seat"), "question": d.get("question"),
+                          "answer": d.get("answer"), "signal": d.get("signal")}
+                         for d in debriefs],
+            "asked": bool(debriefs),
         },
         "outcomes": pairs_mod.summary(ledger),
     }
@@ -101,29 +121,39 @@ def render(rep):
     d = rep["qc"]["defects"]
     add("## Defects" if d else "## Defects — none")
     for f in d:
-        add(f"  ✗ {f['check']}: {f['detail']}")
+        persisted = (f" (still open across {f['seen']} checks)"
+                     if f.get("seen", 1) > 1 else "")
+        add(f"  ✗ {f['check']}: {f['detail']}{persisted}")
         if f.get("evidence"):
             add(f"      evidence: {f['evidence']}")
     add("")
 
     # --- 2. what the seats reported ------------------------------------
     u = rep["uxr"]
-    add(f"## From the seats ({u['markers_total']} marker"
-        f"{'' if u['markers_total'] == 1 else 's'})")
+    add(f"## From the seats ({u['signals_total']} signal"
+        f"{'' if u['signals_total'] == 1 else 's'})")
     if u["patterns"]:
-        add(f"  Patterns (>= {u['floor']} reports — worth acting on):")
+        add(f"  Patterns (>= {u['floor']} — worth acting on):")
         for p in u["patterns"]:
-            add(f"    !{p['marker']} ×{p['count']} [{p['dimension']}] "
-                f"{p['meaning']} — seats: {', '.join(p['seats']) or 'unattributed'}"
-                f"; beats {', '.join(str(b) for b in p['beats'])}")
+            mark = "+" if p["positive"] else "-"
+            add(f"    {mark} {p['signal']} ×{p['count']} — {p['means']}; "
+                f"seats: {', '.join(p['seats']) or 'unattributed'}"
+                f"; beats {', '.join(str(b) for b in p['beats'])} "
+                f"[{'/'.join(p['sources'])}]")
     if u["moments"]:
         add(f"  Individual moments (below {u['floor']} — a moment, not a tendency):")
         for p in u["moments"]:
-            add(f"    !{p['marker']} ×{p['count']} [{p['dimension']}] "
-                f"at beat(s) {', '.join(str(b) for b in p['beats'])}")
+            mark = "+" if p["positive"] else "-"
+            add(f"    {mark} {p['signal']} ×{p['count']} — {p['means']}, "
+                f"beat(s) {', '.join(str(b) for b in p['beats'])} "
+                f"[{'/'.join(p['sources'])}]")
     if not u["patterns"] and not u["moments"]:
-        add("  No markers dropped. That is an absence of data, not an absence "
-            "of friction — check that the seats know the markers exist.")
+        add("  Nothing was classified tonight. That is an absence of data, "
+            "not an absence of friction — a GM who did not notice friction")
+        add("  cannot have recorded it. The close-out questions are the check "
+            "on exactly that blind spot.")
+    else:
+        add("  (inferred from ordinary speech; advisory always, never a defect)")
     add("")
 
     if u["stories"]:
@@ -136,10 +166,18 @@ def render(rep):
                 add(f"      reacting to: \"{s['reacting_to']}\"")
         add("")
 
-    if u["followups"]:
-        add("## Ask at the break (cause not stated)")
-        for f in u["followups"]:
-            add(f"  • {f['seat']} (!{f['marker']}, beat {f['beat']}): {f['question']}")
+    if u["debriefs"]:
+        add("## What they said at the close")
+        for d in u["debriefs"]:
+            add(f"  {d['seat']} — asked: {d['question']}")
+            add(f"      \"{d['answer']}\"")
+        add("")
+    else:
+        add("## No close-out questions recorded")
+        add("  This is the high-confidence half of the lane, and the only "
+            "check on the GM's own blind spots.")
+        add("  `tablekit debrief` prints them — ask them in your own words, "
+            "as part of the close.")
         add("")
 
     # --- 3. outcome pairs ----------------------------------------------

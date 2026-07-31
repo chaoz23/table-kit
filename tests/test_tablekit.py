@@ -52,7 +52,7 @@ class TestEvents(TempLedger):
 
     def test_validate_rejects_missing_required_key(self):
         with self.assertRaises(SchemaError):
-            make("uxr.marker", seat="rowan")  # no marker
+            make("uxr.signal", seat="rowan")  # no signal/quote/source
 
     def test_validate_rejects_unknown_pair_kind(self):
         with self.assertRaises(SchemaError):
@@ -68,7 +68,8 @@ class TestEvents(TempLedger):
 
     def test_append_and_read_roundtrip(self):
         self.led.append("ux.beat", words=5, chunks=1)
-        self.led.append("uxr.marker", seat="rowan", marker="yes")
+        self.led.append("uxr.signal", seat="rowan", signal="resonance",
+                        quote="that was good", source="dm")
         self.assertEqual(len(self.led.read()), 2)
         self.assertEqual(len(self.led.read(lane="uxr")), 1)
 
@@ -138,49 +139,59 @@ class TestConfig(unittest.TestCase):
 
 
 class TestUXR(unittest.TestCase):
-    def test_parses_bare_marker(self):
-        self.assertEqual(uxr.parse("!yes")[0]["marker"], "yes")
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.led = Ledger(os.path.join(self.dir, "s.jsonl"))
 
-    def test_parses_marker_mid_sentence_with_note(self):
-        got = uxr.parse("I move up !huh what's a gorse")
-        self.assertEqual(got[0]["marker"], "huh")
-        self.assertEqual(got[0]["note"], "what's a gorse")
+    def test_signal_records_seat_kind_and_evidence(self):
+        rec = uxr.record_signal(self.led, "rowan", "pacing",
+                                "can we get moving")
+        self.assertEqual(rec["signal"], "pacing")
+        self.assertEqual(rec["quote"], "can we get moving")
+        self.assertEqual(rec["source"], "dm")
 
-    def test_parses_multiple_markers(self):
-        got = uxr.parse("!yes\nalso !mine")
-        self.assertEqual([g["marker"] for g in got], ["yes", "mine"])
+    def test_unknown_signal_refused(self):
+        with self.assertRaises(uxr.SignalError):
+            uxr.record_signal(self.led, "rowan", "vibes", "hmm")
 
-    def test_case_insensitive(self):
-        self.assertEqual(uxr.parse("!WAIT")[0]["marker"], "wait")
+    def test_unknown_source_refused(self):
+        with self.assertRaises(uxr.SignalError):
+            uxr.record_signal(self.led, "rowan", "pacing", "hmm",
+                              source="astrology")
 
-    def test_ignores_non_markers(self):
-        self.assertEqual(uxr.parse("that's amazing!! no marker here"), [])
-        self.assertEqual(uxr.parse("!wow"), [])
+    def test_quote_is_mandatory(self):
+        for empty in ("", "   ", None):
+            with self.assertRaises(uxr.SignalError):
+                uxr.record_signal(self.led, "rowan", "pacing", empty)
 
-    def test_strip_removes_markers(self):
-        self.assertEqual(uxr.strip("I draw my blade !yes"), "I draw my blade")
+    def test_signal_anchors_to_current_beat(self):
+        self.led.append("ux.beat", words=3, chunks=1)
+        self.led.append("ux.beat", words=3, chunks=1)
+        rec = uxr.record_signal(self.led, "rowan", "pacing", "so anyway")
+        self.assertEqual(rec["beat"], 2)
 
-    def test_record_anchors_to_current_beat(self):
-        d = tempfile.mkdtemp()
-        led = Ledger(os.path.join(d, "s.jsonl"))
-        led.append("ux.beat", words=3, chunks=1)
-        led.append("ux.beat", words=3, chunks=1)
-        [ev] = uxr.record(led, "rowan", "!drag")
-        self.assertEqual(ev["beat"], 2)
+    def test_positive_signals_are_marked(self):
+        self.assertIn("resonance", uxr.POSITIVE)
+        self.assertIn("spotlight", uxr.POSITIVE)
+        self.assertNotIn("pacing", uxr.POSITIVE)
 
-    def test_stories_never_invent_a_cause(self):
-        st = uxr.stories([{"seat": "rowan", "marker": "huh", "beat": 4}])
-        self.assertEqual(st[0]["cause"], "not stated")
-        self.assertIsNone(st[0]["said"])
+    def test_stories_carry_the_quote_and_the_source(self):
+        st = uxr.stories([{"seat": "rowan", "signal": "pacing", "beat": 4,
+                           "quote": "can we get moving", "source": "local"}])
+        self.assertEqual(st[0]["said"], "can we get moving")
+        self.assertEqual(st[0]["source"], "local")
+        self.assertTrue(st[0]["story"].startswith("As rowan"))
 
-    def test_followups_skip_markers_that_stated_their_cause(self):
-        ms = [{"seat": "rowan", "marker": "huh", "beat": 1, "note": "the word gorse"},
-              {"seat": "vesh", "marker": "huh", "beat": 2}]
-        f = uxr.followups(ms)
-        self.assertEqual([x["seat"] for x in f], ["vesh"])
+    def test_debrief_questions_lead_with_the_positive_ones(self):
+        qs = uxr.debrief_questions()
+        self.assertEqual(qs[0]["signal"], "resonance")
+        self.assertTrue(all(q["question"] for q in qs))
 
-    def test_mine_marker_has_no_followup_question(self):
-        self.assertIsNone(uxr.MARKERS["mine"]["ask"])
+    def test_debrief_is_recorded_verbatim(self):
+        uxr.record_debrief(self.led, "rowan", "anything drag tonight?",
+                           "the chapel bit went long")
+        [rec] = self.led.read(etype="uxr.debrief")
+        self.assertEqual(rec["answer"], "the chapel bit went long")
 
 
 # ---------------------------------------------------------------- pairs
@@ -277,18 +288,40 @@ class TestDetector(TempLedger):
         self.assertIn("unanswered", checks)
 
     def test_seat_quiet_is_a_defect_with_evidence(self):
-        t0 = time.time() - 3600
-        self.led.append("ux.beat", words=10, chunks=1, ts=t0)
+        now = time.time()
+        t0 = now - 3600
         self.led.append("qa.inbound", seat="rowan", chars=5, ts=t0 + 1)
-        found = [f for f in detector.check(self.led, self.cfg)
+        self.led.append("ux.beat", words=10, chunks=1, ts=now - 30)
+        found = [f for f in detector.check(self.led, self.cfg, now=now)
                  if f["check"] == "seat_quiet"]
         self.assertTrue(found)
         self.assertEqual(found[0]["severity"], "defect")
         self.assertTrue(found[0]["evidence"])
 
-    def test_checked_on_seat_is_not_reported_quiet(self):
-        t0 = time.time() - 3600
+    def test_quiet_seats_are_not_accused_after_the_session_ends(self):
+        """Running the report the morning after must not accuse every seat.
+        A seat going quiet only matters while the table is still running."""
+        t0 = time.time() - 7200
         self.led.append("ux.beat", words=10, chunks=1, ts=t0)
+        self.led.append("qa.inbound", seat="rowan", chars=5, ts=t0 + 10)
+        self.led.append("qa.inbound", seat="vesh", chars=5, ts=t0 + 20)
+        quiet = [f for f in detector.check(self.led, self.cfg)
+                 if f["check"] == "seat_quiet"]
+        self.assertEqual(quiet, [])
+
+    def test_quiet_seat_still_fires_while_the_table_is_running(self):
+        now = time.time()
+        self.led.append("ux.beat", words=10, chunks=1, ts=now - 3600)
+        self.led.append("qa.inbound", seat="vesh", chars=5, ts=now - 3500)
+        self.led.append("qa.inbound", seat="rowan", chars=5, ts=now - 30)
+        self.led.append("ux.beat", words=10, chunks=1, ts=now - 20)
+        quiet = [f["seat"] for f in detector.check(self.led, self.cfg, now=now)
+                 if f["check"] == "seat_quiet"]
+        self.assertIn("vesh", quiet)
+        self.assertNotIn("rowan", quiet)
+
+    def test_checked_on_seat_is_not_reported_quiet(self):
+        self.led.append("ux.beat", words=10, chunks=1)
         for s in ("rowan", "vesh"):
             pairs.open_pair(self.led, "checkin", f"ci-{s}", seat=s)
         quiet = [f for f in detector.check(self.led, self.cfg)
@@ -370,7 +403,7 @@ class TestDetector(TempLedger):
 
 
 class TestReport(TempLedger):
-    def _session(self, beats=5, markers=(), defects=False):
+    def _session(self, beats=5, signals=(), defects=False):
         t0 = time.time() - 600
         for i in range(beats):
             self.led.append("ux.beat", words=20, chunks=1, ts=t0 + i * 10,
@@ -378,8 +411,9 @@ class TestReport(TempLedger):
             self.led.append("qa.inbound", seat="rowan", chars=40, ts=t0 + i * 10 + 3)
             self.led.append("qa.post", ok=True, chars=100, chunks=1,
                             latency_ms=120, ts=t0 + i * 10)
-        for seat, m in markers:
-            self.led.append("uxr.marker", seat=seat, marker=m, beat=2)
+        for seat, m in signals:
+            self.led.append("uxr.signal", seat=seat, signal=m, beat=2,
+                            quote="something they said", source="dm")
         if defects:
             self.led.append("qc.finding", check="seat_quiet", detail="quiet",
                             severity="defect", seat="vesh")
@@ -396,45 +430,66 @@ class TestReport(TempLedger):
         rep = report.build(self.led, self.cfg)
         self.assertEqual(report.exit_code(rep), 0)
 
+    def test_repeated_findings_collapse_to_one_defect(self):
+        """QC runs between beats; a standing defect is recorded once per run.
+        The report shows one problem that persisted, not thirty problems."""
+        self._session()
+        for _ in range(5):
+            self.led.append("qc.finding", check="seat_quiet", detail="quiet",
+                            severity="defect", seat="vesh")
+        rep = report.build(self.led, self.cfg)
+        self.assertEqual(len(rep["qc"]["defects"]), 1)
+        self.assertEqual(rep["qc"]["defects"][0]["seen"], 5)
+        self.assertIn("still open across 5 checks", report.render(rep))
+
+    def test_distinct_defects_are_not_collapsed(self):
+        self._session()
+        self.led.append("qc.finding", check="seat_quiet", detail="a",
+                        severity="defect", seat="vesh")
+        self.led.append("qc.finding", check="seat_quiet", detail="a",
+                        severity="defect", seat="rowan")
+        rep = report.build(self.led, self.cfg)
+        self.assertEqual(len(rep["qc"]["defects"]), 2)
+
     def test_defects_exit_one(self):
         self._session(defects=True)
         rep = report.build(self.led, self.cfg)
         self.assertEqual(report.exit_code(rep), 1)
 
-    def test_markers_below_floor_are_moments_not_patterns(self):
-        self._session(markers=[("rowan", "huh"), ("rowan", "huh")])
+    def test_signals_below_floor_are_moments_not_patterns(self):
+        self._session(signals=[("rowan", "comprehension")] * 2)
         rep = report.build(self.led, self.cfg)
         self.assertEqual(rep["uxr"]["patterns"], [])
         self.assertEqual(rep["uxr"]["moments"][0]["count"], 2)
         self.assertIn("not a tendency", report.render(rep))
 
-    def test_markers_at_floor_become_a_pattern(self):
-        self._session(markers=[("rowan", "drag")] * 3)
+    def test_signals_at_floor_become_a_pattern(self):
+        self._session(signals=[("rowan", "pacing")] * 3)
         rep = report.build(self.led, self.cfg)
-        self.assertEqual(rep["uxr"]["patterns"][0]["marker"], "drag")
+        self.assertEqual(rep["uxr"]["patterns"][0]["signal"], "pacing")
         self.assertEqual(rep["uxr"]["moments"], [])
 
-    def test_no_markers_says_so_rather_than_implying_no_friction(self):
+    def test_no_signals_says_so_rather_than_implying_no_friction(self):
         self._session()
         self.assertIn("absence of data", report.render(self.led and
                                                        report.build(self.led, self.cfg)))
 
     def test_report_contains_no_composite_score(self):
-        self._session(markers=[("rowan", "yes")] * 3, defects=True)
+        self._session(signals=[("rowan", "resonance")] * 3, defects=True)
         rep = report.build(self.led, self.cfg)
         flat = json.dumps(rep).lower()
         for banned in ('"score"', '"grade"', '"rating"', '"overall"'):
             self.assertNotIn(banned, flat)
 
-    def test_stories_are_emitted_per_marker(self):
-        self._session(markers=[("rowan", "wait"), ("vesh", "mine")])
+    def test_stories_are_emitted_per_signal(self):
+        self._session(signals=[("rowan", "floor"), ("vesh", "spotlight")])
         rep = report.build(self.led, self.cfg)
         self.assertEqual(len(rep["uxr"]["stories"]), 2)
         self.assertTrue(all(s["story"].startswith("As ")
                             for s in rep["uxr"]["stories"]))
 
     def test_render_is_plain_text_and_mentions_every_lane(self):
-        self._session(markers=[("rowan", "yes")])
+        self._session(signals=[("rowan", "resonance")])
         text = report.render(report.build(self.led, self.cfg))
         for section in ("Defects", "From the seats", "Shape", "Machinery"):
             self.assertIn(section, text)
@@ -505,7 +560,7 @@ class TestCLI(TempLedger):
         self.assertEqual(len(pairs.open_now(self.led, "cue")), 1)
         cli.main(["inbound", "--seat", "vesh", "--text", "I open it !yes"] + common)
         self.assertEqual(pairs.open_now(self.led, "cue"), [])
-        self.assertEqual(len(self.led.read(etype="uxr.marker")), 1)
+        self.assertEqual(len(self.led.read(lane="uxr")), 0)
 
     def test_beat_without_mention_exits_one(self):
         cfg_path = os.path.join(self.dir, "table.json")
@@ -529,9 +584,18 @@ class TestCLI(TempLedger):
         self.led.append("ux.beat", words=900, chunks=9)
         self.assertEqual(self.run_cli("qc"), 1)
 
-    def test_schema_and_markers_emit(self):
+    def test_schema_emits(self):
         self.assertEqual(self.run_cli("schema"), 0)
-        self.assertEqual(self.run_cli("markers"), 0)
+
+    def test_debrief_prints_questions_with_no_args(self):
+        self.assertEqual(self.run_cli("debrief"), 0)
+
+    def test_signal_requires_seat_and_kind(self):
+        self.assertEqual(self.run_cli("signal", "--seat", "rowan"), 2)
+
+    def test_signal_refuses_without_a_quote(self):
+        self.assertEqual(
+            self.run_cli("signal", "--seat", "rowan", "--kind", "pacing"), 2)
 
     def test_report_on_empty_refuses_with_two(self):
         self.assertEqual(self.run_cli("report"), 2)

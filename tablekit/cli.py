@@ -24,12 +24,11 @@ from . import detector, pairs, report, ux, uxr
 from .config import ConfigError, load as load_config
 from .events import SCHEMA, Ledger, PAIR_KINDS, SchemaError
 
-__version__ = "0.1.3"
+__version__ = "0.2.0"
 
 USAGE = """tablekit — instrumentation for a live hybrid table
 
   tablekit init [path]              write a starter table.json
-  tablekit markers                  the player marker card (paste at the table)
 
   during play
     tablekit beat "<text>" [--cue SEAT] [--chunks N] [--kind scene|combat|ooc]
@@ -38,11 +37,15 @@ USAGE = """tablekit — instrumentation for a live hybrid table
     tablekit consumed <pair-id> [--outcome consumed]
     tablekit checkin --seat S                  checked on a quiet seat
     tablekit turn --seat S [--wait N]          a seat got the floor
+    tablekit signal --seat S --kind pacing --quote "<their words>"
+                                               record an inferred signal
     tablekit qc [--state FILE] [--record]      run the checks
     tablekit pairs                             what is still open
     tablekit sweep                             expire what has timed out
 
   after play
+    tablekit debrief                  the plain-English questions to ask
+    tablekit debrief --seat S --q "..." --a "..."      record an answer
     tablekit report [--json] [--out FILE]
     tablekit schema                   the event schema, as JSON
 
@@ -105,8 +108,61 @@ def cmd_init(args):
     return 0
 
 
-def cmd_markers(_args):
-    print(uxr.help_text())
+def cmd_signal(args):
+    """Record a signal inferred from what a player already said.
+
+    There is deliberately no player-facing counterpart to this command.
+    Signals are classified in the background from ordinary speech; the table
+    is never asked to learn a syntax. See tablekit.uxr.
+    """
+    seat = _flag(args, "--seat")
+    kind = _flag(args, "--kind")
+    quote_flag = _flag(args, "--quote")
+    source = _flag(args, "--source", "dm")
+    note = _flag(args, "--note")
+    if not seat or not kind:
+        print("signal: --seat and --kind are required "
+              f"(kinds: {', '.join(sorted(uxr.SIGNALS))})", file=sys.stderr)
+        return 2
+    cfg, led = _ctx(args)
+    # _ctx strips the global flags, so anything left is a real positional.
+    quote = quote_flag or (args[0] if args else "")
+    try:
+        rec = uxr.record_signal(led, _seat_id(cfg, seat), kind, quote,
+                                source=source, note=note)
+    except uxr.SignalError as e:
+        print(f"signal: {e}", file=sys.stderr)
+        return 2
+    print(f"{kind} signal recorded for {rec['seat']} at beat {rec['beat']} "
+          f"(source: {source})")
+    return 0
+
+
+def cmd_debrief(args):
+    """Ask, or record, the session-close questions.
+
+    With no arguments this prints the questions in plain English — they are
+    meant to be asked conversationally, not pasted as a form.
+    """
+    seat = _flag(args, "--seat")
+    q = _flag(args, "--q")
+    a = _flag(args, "--a")
+    kind = _flag(args, "--kind")
+    cfg, led = _ctx(args)
+    if not (seat and q and a):
+        print("Ask these at the end, in your own words:\n")
+        for item in uxr.debrief_questions():
+            print(f"  [{item['signal']}] {item['question']}")
+        print("\nRecord an answer with:")
+        print('  tablekit debrief --seat S --q "<what you asked>" '
+              '--a "<what they said>" [--kind pacing]')
+        return 0
+    try:
+        uxr.record_debrief(led, _seat_id(cfg, seat), q, a, signal=kind)
+    except uxr.SignalError as e:
+        print(f"debrief: {e}", file=sys.stderr)
+        return 2
+    print(f"debrief recorded for {_seat_id(cfg, seat)}")
     return 0
 
 
@@ -114,11 +170,12 @@ def cmd_beat(args):
     cue = _flag(args, "--cue")
     chunks = int(_flag(args, "--chunks", 1))
     kind = _flag(args, "--kind")
-    text = args[0] if args else ""
+    text_flag = _flag(args, "--text")
+    cfg, led = _ctx(args)
+    text = text_flag or (args[0] if args else "")
     if not text:
         print("beat: needs the text of the beat", file=sys.stderr)
         return 2
-    cfg, led = _ctx(args)
     seat = cfg.seat(cue) if (cfg and cue) else None
     rec = led.append("ux.beat", words=len(text.split()), chunks=chunks,
                      kind=kind, cued_seat=(seat.id if seat else cue),
@@ -143,14 +200,14 @@ def cmd_beat(args):
 
 def cmd_inbound(args):
     seat = _flag(args, "--seat")
-    text = _flag(args, "--text") or (args[0] if args else "")
+    text_flag = _flag(args, "--text")
     if not seat:
         print("inbound: --seat is required", file=sys.stderr)
         return 2
     cfg, led = _ctx(args)
+    text = text_flag or (args[0] if args else "")
     sid = _seat_id(cfg, seat)
     led.append("qa.inbound", seat=sid, chars=len(text), words=len(text.split()))
-    marks = uxr.record(led, sid, text)
     closed = []
     for p in pairs.open_now(led, "cue"):
         if p.get("seat") == sid:
@@ -162,8 +219,6 @@ def cmd_inbound(args):
                              opened_ts=p["opened_ts"])
             closed.append(p["id"])
     bits = [f"inbound from {sid}"]
-    if marks:
-        bits.append("markers: " + ", ".join("!" + m["marker"] for m in marks))
     if closed:
         bits.append("closed: " + ", ".join(closed))
     print(" | ".join(bits))
@@ -172,8 +227,8 @@ def cmd_inbound(args):
 
 def cmd_roll(args):
     seat = _flag(args, "--seat")
-    detail = args[0] if args else "roll called"
     cfg, led = _ctx(args)
+    detail = args[0] if args else "roll called"
     pid = pairs.new_id("roll")
     pairs.open_pair(led, "roll", pid, seat=_seat_id(cfg, seat), detail=detail)
     print(f"roll pair {pid} open — close it with: tablekit consumed {pid}")
@@ -182,11 +237,11 @@ def cmd_roll(args):
 
 def cmd_consumed(args):
     outcome = _flag(args, "--outcome", "consumed")
+    _cfg, led = _ctx(args)
     if not args:
         print("consumed: needs a pair id (see `tablekit pairs`)", file=sys.stderr)
         return 2
     pid = args[0]
-    _cfg, led = _ctx(args)
     match = [p for p in pairs.open_now(led) if p["id"] == pid]
     if not match:
         print(f"no open pair {pid}", file=sys.stderr)
@@ -290,16 +345,19 @@ def cmd_schema(_args):
         "version": __version__,
         "event_types": {k: list(v) for k, v in SCHEMA.items()},
         "pair_kinds": PAIR_KINDS,
-        "markers": {k: v["meaning"] for k, v in uxr.MARKERS.items()},
+        "signals": {k: v["means"] for k, v in uxr.SIGNALS.items()},
+        "signal_sources": list(uxr.SOURCES),
+        "player_command_syntax": None,
         "exit_codes": {"0": "clean", "1": "findings", "2": "refused"},
     }, indent=1))
     return 0
 
 
 COMMANDS = {
-    "init": cmd_init, "markers": cmd_markers, "beat": cmd_beat,
+    "init": cmd_init, "beat": cmd_beat,
     "inbound": cmd_inbound, "roll": cmd_roll, "consumed": cmd_consumed,
-    "checkin": cmd_checkin, "turn": cmd_turn, "qc": cmd_qc, "pairs": cmd_pairs,
+    "checkin": cmd_checkin, "turn": cmd_turn, "signal": cmd_signal,
+    "debrief": cmd_debrief, "qc": cmd_qc, "pairs": cmd_pairs,
     "sweep": cmd_sweep, "report": cmd_report, "schema": cmd_schema,
 }
 

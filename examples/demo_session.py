@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tablekit import detector, pairs, report  # noqa: E402
 from tablekit.config import TableConfig  # noqa: E402
 from tablekit.events import Ledger  # noqa: E402
-from tablekit.uxr import record as mark  # noqa: E402
+from tablekit import uxr  # noqa: E402
 
 CONFIG = {
     "name": "The Example Table",
@@ -46,10 +46,13 @@ def beat(led, t, text, cue=None, chunks=1):
                         ts=t)
 
 
-def says(led, t, seat, text):
+def says(led, t, seat, text, signal=None):
+    """A seat speaks. `signal` is what the GM understood from it — recorded
+    with their actual words attached, never parsed out of a token."""
     led.append("qa.inbound", ts=t, seat=seat, chars=len(text),
                words=len(text.split()))
-    mark(led, seat, text, ts=t)
+    if signal:
+        uxr.record_signal(led, seat, signal, text, source="dm", ts=t)
     for p in pairs.open_now(led, "cue"):
         if p["seat"] == seat:
             pairs.close_pair(led, "cue", p["id"], "taken", ts=t,
@@ -66,7 +69,8 @@ def main():
                  "time, and the bell above the chapel has not rung since you "
                  "got here. Rowan, you are first onto the wet stone.",
          cue="rowan")
-    says(led, t + 40, "rowan", "I go slow, watching the water line. !yes love this")
+    says(led, t + 40, "rowan", "I go slow, watching the water line. Oh this is good.",
+         signal="resonance")
 
     t += 300
     beat(led, t, "Halfway across, something under the surface keeps pace with "
@@ -88,7 +92,8 @@ def main():
     t += 420
     beat(led, t, "The stones behind you are already under. Rowan, you can see "
                  "the chapel door standing open.", cue="rowan")
-    says(led, t + 60, "rowan", "I run for it. !mine finally get to use the lantern")
+    says(led, t + 60, "rowan", "I run for it — finally, this is what the lantern is for.",
+         signal="spotlight")
 
     t += 380
     beat(led, t, "Inside, thirty-one cuts in the doorframe, and the rope is "
@@ -98,21 +103,38 @@ def main():
                  "the last entry is today's date in a hand none of you know, "
                  "and below that a line of gorse pressed flat between the "
                  "pages, and the ink is not dry.", chunks=3)
-    says(led, t + 70, "brae", "!huh what's a gorse")
-    says(led, t + 90, "rowan", "!drag")
+    says(led, t + 70, "brae", "wait, what's a gorse?", signal="comprehension")
+    says(led, t + 90, "rowan", "is anything happening here", signal="pacing")
 
     t += 500
     beat(led, t, "The rope stops swinging.")
-    says(led, t + 40, "brae", "!drag still feels slow honestly")
-    says(led, t + 60, "rowan", "I read the last entry aloud. !drag")
+    says(led, t + 40, "brae", "can we get moving", signal="pacing")
+    says(led, t + 60, "rowan", "I read the last entry aloud. Are we done here?",
+         signal="pacing")
+
+    # A QC pass mid-session, which is when these checks actually run — between
+    # beats, while there is still time to fix anything. This is where Vesh's
+    # silence gets caught: forty minutes unaddressed while the table carried
+    # the scene, with the undeliverable cue at beat 4 as the cause.
+    detector.record(led, detector.check(led, cfg, now=t + 90))
 
     t += 300
     beat(led, t, "It is your own name, Rowan.")
-    says(led, t + 30, "rowan", "!yes okay that's a moment")
-    says(led, t + 45, "brae", "!off wait, we never told anyone our names here")
+    says(led, t + 30, "rowan", "okay. Okay, that's a moment.", signal="resonance")
+    says(led, t + 45, "brae", "hold on — we never told anyone our names here",
+         signal="continuity")
+
+    # The close: ask, in plain English, and record what they say. This is the
+    # half that checks the GM's own blind spots.
+    uxr.record_debrief(led, "brae", "anything drag tonight?",
+                       "the chapel description went long, I lost the thread",
+                       signal="pacing", ts=t + 700)
+    uxr.record_debrief(led, "rowan", "anything stick with you?",
+                       "the name in the ledger. I did not see that coming",
+                       signal="resonance", ts=t + 720)
 
     # End of the evening: expire what is still hanging.
-    now = t + 600
+    now = t + 800
     pairs.sweep(led, now=now, ttls=cfg.thresholds)
     detector.record(led, detector.check(led, cfg, now=now))
 

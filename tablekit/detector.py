@@ -100,7 +100,16 @@ def check(ledger, cfg=None, now=None, state=None):
     # 4. A seat that has gone quiet and has not been checked on. Live-failure
     #    rule: agents will happily carry a scene to its climax while a human
     #    seat sits unaddressed, and nothing in the record looks wrong.
-    if cfg:
+    #
+    #    Only while the table is still running. If the GM's own last beat is
+    #    older than the threshold, the session is over — and everyone being
+    #    quiet after the session ends is not a finding about anyone. Without
+    #    this, running the report the morning after accuses every seat at the
+    #    table, which is exactly the cry-wolf failure that gets a checker
+    #    ignored.
+    session_live = bool(last_beat) and (now - last_beat.get("ts", now)) <= thr.get(
+        "seat_quiet_s", 600)
+    if cfg and session_live:
         quiet_s = thr.get("seat_quiet_s", 600)
         inbound = [r for r in rows if r.get("type") == "qa.inbound"]
         session_start = rows[0]["ts"] if rows else now

@@ -1,202 +1,229 @@
-"""The elicited lane — the only instrument that crosses the legibility boundary.
+"""The elicited lane — what a session was *like*, which no transcript holds.
 
 Everything else this kit records can be reconstructed from the session file
 afterwards. This lane cannot, because it measures things that leave no trace:
 
   * whether a description landed or slid past
-  * whether a word was understood
-  * whether a player wanted the floor and did not get it
-  * whether the evening was dragging *for them* while it felt brisk to the GM
+  * whether a player was following, or had quietly lost the thread
+  * whether someone wanted the floor and the moment closed
+  * whether the evening dragged *for them* while it felt brisk to the GM
   * whether someone got to do the thing their character exists to do
 
 A transcript of a great session and a transcript of a session everyone endured
-look about the same. So the kit asks, in the cheapest form that will actually
-get used mid-play: a single token dropped into the chat.
+look about the same.
 
-## The vocabulary
+## The product non-goal that shapes this whole module
 
-Six markers. Each maps to one craft dimension, and each was chosen because a
-real table lost information for the want of it.
+**Players are never given a command syntax.** No `!tokens`, no aliases, no
+keywords to memorise — not as a convenience, not as an "advanced" option, not
+hidden in the docs. This is a hard product constraint, not a preference, and
+`tests/test_no_player_commands.py` enforces it.
 
-| marker  | the seat is saying                          | dimension            |
-|---------|---------------------------------------------|----------------------|
-| `!huh`  | I did not follow that                       | comprehension        |
-| `!wait` | I wanted in and the moment passed            | floor / seat access  |
-| `!yes`  | that landed                                  | what to do more of   |
-| `!drag` | this is slow *for me* right now              | pacing               |
-| `!mine` | I got to do my character's particular thing  | spotlight fit        |
-| `!off`  | that contradicts something established       | continuity           |
+The reason is the top-level goal. Text RPGs solved this problem badly for
+forty years: Zork and *Moria* and everything after them gave players a verb
+list because a parser in 1980 could not understand a sentence. The command
+vocabulary was never a design choice, it was a workaround for a missing
+capability — and it is exactly what makes those games feel like operating a
+computer rather than sitting with a person who is running a world for you.
 
-`!yes` and `!mine` matter as much as the complaints. An instrument that only
-collects grievances will teach a GM to avoid risk, which is a different thing
-from teaching them to run a good table.
+That capability is no longer missing. An agent GM that hands players a token
+vocabulary has voluntarily reproduced the limitation, and traded away the only
+thing that makes it worth playing with over a parser game.
 
-## The rule that keeps this honest
+It would not even work on its own terms: a labelled, on-the-record `!drag` is
+*more* socially expensive than muttering "ooh can we get to the fight", not
+less. The players who most need the channel are the ones who would never use
+it.
 
-**A marker is evidence for a pattern. It is never a verdict on a beat.**
+So the buckets below are **internal steering categories**, inferred in the
+background from what people already say. They are for the GM and the report.
+They are never surfaced to a player as something to type. The rule generalises
+past this module: anywhere the table has to speak computer instead of speaking
+English is the same failure. GM-side tooling (`tablekit signal`, the CLI) is
+operator machinery and exempt — nobody at the table types it.
 
-This is not politeness, it is a correction of a real error. A single `!huh`
-was once read as "unfamiliar words fail at this table," and the rule written
-from it was wrong — the player's actual position was "I like the new words,
-sometimes I will have to ask." One report of friction tells you a moment had
-friction. It does not tell you the cause, and it certainly does not generalise
-to a preference. So the reporting layer refuses to describe anything below
-`MIN_PATTERN` occurrences as a rate or a tendency; it lists the individual
-moments and leaves the inference to whoever was in the room.
+## Where signals come from
+
+| source | what it is | weight |
+|---|---|---|
+| `dm` | the agent GM classifying a line it already read | advisory |
+| `local` | an independent model pass over the same transcript | advisory, and a check on `dm`'s blind spots |
+| `debrief` | a plain-English question asked at session close, answered | the high-confidence channel |
+
+`dm` alone is not enough on its own, and the reason is structural: a GM that
+does not notice friction will not record friction, so the instrument inherits
+exactly the blind spots the lane was built to route around. That is what the
+`local` pass and the debrief are for. See docs/INSTRUMENTATION.md.
+
+## The honesty fences
+
+**Inferred signals never become defects.** They are advisory in every path.
+Something a model *thought* a player meant cannot be allowed to accuse.
+
+**The player's own words are always stored with an inferred signal**, so the
+inference is auditable by whoever was in the room. A classification with no
+quote is refused.
+
+**A signal is evidence for a pattern, never a verdict on a beat.** Below
+`MIN_PATTERN`, the report lists individual moments and refuses to state a rate
+or a tendency. This is a correction of a real error: one player asking what a
+word meant was once generalised into "unfamiliar diction fails at this table",
+and their actual position was the opposite — *"I like the new words, sometimes
+I will have to ask."*
 """
 
-import re
-
-#: Below this many observations of a marker, the report shows the individual
-#: moments and refuses to characterise a tendency. Three is not a statistical
-#: threshold — no N this small is — it is the smallest number that cannot be a
-#: single bad moment plus noise.
+#: Below this many observations, the report shows individual moments and
+#: refuses to characterise a tendency. Three is not a statistical threshold —
+#: no N this small is — it is the smallest number that cannot be a single bad
+#: moment plus noise.
 MIN_PATTERN = 3
 
-MARKERS = {
-    "huh":  {"meaning": "did not follow that",
-             "dimension": "comprehension",
-             "ask": "what was unclear — a word, or what was happening?"},
-    "wait": {"meaning": "wanted in and the moment passed",
-             "dimension": "floor access",
-             "ask": "what were you about to do?"},
-    "yes":  {"meaning": "that landed",
-             "dimension": "resonance",
-             "ask": "what landed, specifically?"},
-    "drag": {"meaning": "slow for me right now",
-             "dimension": "pacing",
-             "ask": "were you waiting on someone, or on the scene?"},
-    "mine": {"meaning": "got to do my character's particular thing",
-             "dimension": "spotlight fit",
-             "ask": None},
-    "off":  {"meaning": "contradicts something established",
-             "dimension": "continuity",
-             "ask": "what do you remember differently?"},
+#: Internal steering buckets. NOT a player-facing vocabulary — see the module
+#: docstring. `cues` are illustrative of what the classification is looking
+#: for in ordinary speech; they are documentation for whoever writes the
+#: classifier prompt, never a pattern-matching table.
+SIGNALS = {
+    "pacing": {
+        "means": "this stretch felt slow from that seat",
+        "cues": ["can we get moving", "are we done here", "so anyway",
+                 "is anything happening"],
+        "ask": "was anything dragging tonight — waiting on someone, "
+               "or waiting on the scene?",
+    },
+    "floor": {
+        "means": "wanted to act and the moment closed first",
+        "cues": ["oh I was going to", "never mind then", "I was about to say",
+                 "wait, can I still"],
+        "ask": "was there a moment you wanted in on and did not get?",
+    },
+    "comprehension": {
+        "means": "lost the thread — a word, or what is happening",
+        "cues": ["what's a", "wait, where are we", "who is that again",
+                 "sorry, what just happened"],
+        "ask": "anything you were unclear on — where you were, or what "
+               "something meant?",
+    },
+    "resonance": {
+        "means": "that landed",
+        "cues": ["oh that's good", "okay that's a moment", "brilliant",
+                 "I love that"],
+        "ask": "anything stick with you from tonight?",
+    },
+    "spotlight": {
+        "means": "got to do the thing this character is for",
+        "cues": ["finally", "this is what she does", "been waiting to use"],
+        "ask": "did you get to do the thing you wanted with your character?",
+    },
+    "continuity": {
+        "means": "contradicts something already established",
+        "cues": ["I thought we", "didn't you say", "that's not what",
+                 "we never told anyone"],
+        "ask": "did anything contradict what you already knew?",
+    },
 }
 
-#: `!huh` anywhere in a line, optionally trailed by a note up to end of line.
-#: Deliberately permissive about position: players type these mid-sentence,
-#: and a marker that only works at the start of a line will not be used.
-_RX = re.compile(r"(?<![\w!])!(" + "|".join(MARKERS) + r")\b[ \t:,-]*(.*)$",
-                 re.IGNORECASE | re.MULTILINE)
+#: Signals that mean something went well. Kept explicit so the report cannot
+#: quietly become a grievance log — an instrument that only collects complaints
+#: teaches a GM to avoid risk, which is a different thing from running a good
+#: table.
+POSITIVE = {"resonance", "spotlight"}
+
+SOURCES = ("dm", "local", "debrief")
 
 
-def parse(text):
-    """Extract markers from one chat message.
+class SignalError(ValueError):
+    pass
 
-    Returns a list of `{"marker": str, "note": str|None}`. A message with no
-    markers returns `[]`, which is the overwhelmingly common case — this is
-    called on every inbound line.
+
+def record_signal(ledger, seat, signal, quote, source="dm", beat=None,
+                  note=None, ts=None):
+    """Record one inferred signal.
+
+    `quote` is the player's own words, verbatim, and it is **required**. An
+    inferred signal without the evidence it was inferred from cannot be
+    checked by anyone, which makes it indistinguishable from an opinion the
+    machine made up.
     """
-    found = []
-    for m in _RX.finditer(text or ""):
-        note = (m.group(2) or "").strip() or None
-        # A note that is itself just another marker belongs to that marker.
-        if note and note.startswith("!"):
-            note = None
-        found.append({"marker": m.group(1).lower(), "note": note})
-    return found
+    if signal not in SIGNALS:
+        raise SignalError(
+            f"unknown signal {signal!r}; known: {', '.join(sorted(SIGNALS))}")
+    if source not in SOURCES:
+        raise SignalError(
+            f"unknown source {source!r}; known: {', '.join(SOURCES)}")
+    if not (quote or "").strip():
+        raise SignalError(
+            f"{signal}: a quote is required — an inferred signal with no "
+            "evidence cannot be audited by whoever was in the room")
+    return ledger.append(
+        "uxr.signal", ts=ts, seat=seat, signal=signal, quote=quote.strip()[:300],
+        source=source, note=note,
+        beat=beat if beat is not None else ledger.current_beat())
 
 
-def strip(text):
-    """The message with its markers removed.
+def record_debrief(ledger, seat, question, answer, signal=None, ts=None):
+    """Record one plain-English question and its answer at session close."""
+    if signal is not None and signal not in SIGNALS:
+        raise SignalError(f"unknown signal {signal!r}")
+    return ledger.append("uxr.debrief", ts=ts, seat=seat, question=question,
+                         answer=answer, signal=signal)
 
-    Used so a marker dropped mid-sentence does not end up quoted back to the
-    table as if it were dialogue.
+
+def debrief_questions(ledger=None, seats=None):
+    """The questions worth asking at session close, in plain English.
+
+    Ordered so the two that get honest answers first — the positive ones —
+    come before the complaints. People warm up.
     """
-    return _RX.sub("", text or "").strip()
-
-
-def record(ledger, seat, text, ts=None):
-    """Parse `text` and append one `uxr.marker` event per marker found.
-
-    Returns the events written. Anchors each to the current beat so friction
-    points at a cause, not a clock reading.
-    """
-    beat = ledger.current_beat()
-    out = []
-    for f in parse(text):
-        out.append(ledger.append("uxr.marker", ts=ts, seat=seat,
-                                 marker=f["marker"], note=f["note"], beat=beat))
-    return out
+    order = ["resonance", "spotlight", "pacing", "floor", "comprehension",
+             "continuity"]
+    return [{"signal": s, "question": SIGNALS[s]["ask"]} for s in order]
 
 
 # ---------------------------------------------------------------------------
 # User stories
 # ---------------------------------------------------------------------------
 
-#: Templates keyed by marker. The classic user-story form, filled from what the
-#: record actually contains — never invented. `{seat}`, `{note}`, `{beat}`.
 _STORY = {
-    "wait": "As {seat}, I wanted to act on what was happening, but the floor "
-            "moved on before I got it (beat {beat}).",
-    "huh":  "As {seat}, I wanted to follow the scene, but something in it did "
-            "not parse (beat {beat}).",
-    "drag": "As {seat}, I wanted the scene to keep moving, but it was slow "
-            "from where I sat (beat {beat}).",
-    "off":  "As {seat}, I wanted the world to stay consistent, but a detail "
-            "contradicted what I had already been told (beat {beat}).",
-    "yes":  "As {seat}, I got a moment that landed (beat {beat}).",
-    "mine": "As {seat}, I got to do the thing my character is for (beat {beat}).",
+    "floor": "As {seat}, I wanted to act on what was happening, but the "
+             "moment closed before I got it (beat {beat}).",
+    "comprehension": "As {seat}, I wanted to follow the scene, but I had lost "
+                     "the thread (beat {beat}).",
+    "pacing": "As {seat}, I wanted the scene to keep moving, but it was slow "
+              "from where I sat (beat {beat}).",
+    "continuity": "As {seat}, I wanted the world to stay consistent, but a "
+                  "detail contradicted what I had already been told "
+                  "(beat {beat}).",
+    "resonance": "As {seat}, I got a moment that landed (beat {beat}).",
+    "spotlight": "As {seat}, I got to do the thing my character is for "
+                 "(beat {beat}).",
 }
 
 
-def stories(markers, beat_text=None):
-    """Turn marker events into user-story records.
+def stories(signals, beat_text=None):
+    """Turn signal events into user-story records.
 
-    `beat_text` is an optional `{beat_index: text}` map used to attach the
-    beat a marker was reacting to. Nothing is inferred: if the note is absent
-    the story says so rather than guessing at a cause.
+    Nothing is invented. Every story carries the words it was inferred from
+    and the source that inferred it, so a reader can disagree with the
+    classification without having to trust it.
     """
     out = []
-    for m in markers:
-        marker = m.get("marker")
-        if marker not in _STORY:
+    for s in signals:
+        kind = s.get("signal")
+        if kind not in _STORY:
             continue
-        beat = m.get("beat", 0)
-        story = _STORY[marker].format(seat=m.get("seat", "a seat"), beat=beat)
+        beat = s.get("beat", 0)
         rec = {
-            "seat": m.get("seat"),
-            "marker": marker,
-            "dimension": MARKERS[marker]["dimension"],
+            "seat": s.get("seat"),
+            "signal": kind,
+            "means": SIGNALS[kind]["means"],
             "beat": beat,
-            "story": story,
-            "said": m.get("note"),
-            "cause": "reported" if m.get("note") else "not stated",
+            "story": _STORY[kind].format(seat=s.get("seat") or "a seat",
+                                         beat=beat),
+            "said": s.get("quote"),
+            "source": s.get("source", "dm"),
+            "positive": kind in POSITIVE,
         }
         if beat_text and beat in beat_text:
             rec["reacting_to"] = beat_text[beat]
         out.append(rec)
     return out
-
-
-def followups(markers):
-    """Questions worth asking at the break, deduplicated.
-
-    Only for markers whose cause was NOT stated — if the player already said
-    what was wrong, asking again is noise.
-    """
-    asked, out = set(), []
-    for m in markers:
-        marker = m.get("marker")
-        info = MARKERS.get(marker)
-        if not info or not info["ask"] or m.get("note"):
-            continue
-        key = (m.get("seat"), marker)
-        if key in asked:
-            continue
-        asked.add(key)
-        out.append({"seat": m.get("seat"), "marker": marker,
-                    "beat": m.get("beat"), "question": info["ask"]})
-    return out
-
-
-def help_text():
-    lines = ["Drop these in chat any time — one word, no need to stop play:", ""]
-    for name, info in MARKERS.items():
-        lines.append(f"  !{name:<5} {info['meaning']}")
-    lines += ["",
-              "Add a few words after one if you have them (`!huh what's a gorse`).",
-              "They are read as signals for the GM to look at later, never as "
-              "a complaint about the moment."]
-    return "\n".join(lines)

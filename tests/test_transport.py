@@ -58,11 +58,22 @@ class TestSplit(unittest.TestCase):
 
 
 class TestPost(Base):
-    def test_mention_is_prepended_for_agent_cue(self):
+    def test_mention_is_appended_so_the_fiction_leads(self):
+        """Pros cue by character name inside the fiction. A beat that opens
+        with a raw platform mention leads with machinery instead of world."""
         r = post.post(self.cfg, self.led, "Vesh, the door opens.", cue="vesh",
                       send_fn=self.send)
         self.assertTrue(r["mention_repaired"])
-        self.assertTrue(self.sent[0].startswith("<@42>"))
+        self.assertTrue(self.sent[0].startswith("Vesh, the door opens."))
+        self.assertTrue(self.sent[0].rstrip().endswith("<@42>"))
+
+    def test_split_beat_still_notifies_on_the_first_message(self):
+        """A trailing mention on a multi-message beat would notify the seat
+        only once the tail lands."""
+        long_text = "The chapel is very old. " * 300
+        post.post(self.cfg, self.led, long_text, cue="vesh", send_fn=self.send)
+        self.assertGreater(len(self.sent), 1)
+        self.assertIn("<@42>", self.sent[0])
 
     def test_existing_mention_is_not_duplicated(self):
         r = post.post(self.cfg, self.led, "<@42> Vesh, go.", cue="vesh",
@@ -115,10 +126,10 @@ class TestIngest(Base):
                               keep_text=True)
         self.assertEqual(self.led.read(etype="qa.inbound")[0]["text"], "I draw")
 
-    def test_markers_extracted_from_inbound(self):
+    def test_player_words_are_never_read_as_syntax(self):
         ingest.ingest_message(self.cfg, self.led,
                               {"author": "Rowan", "content": "ok !drag"})
-        self.assertEqual(self.led.read(etype="uxr.marker")[0]["marker"], "drag")
+        self.assertEqual(self.led.read(lane="uxr"), [])
 
     def test_gm_echo_is_not_double_counted(self):
         evs = ingest.ingest_message(self.cfg, self.led,
@@ -142,11 +153,10 @@ class TestIngest(Base):
         """Polling transports re-read the same window constantly; a GM
         checking the channel twice between beats is normal, and must not
         double a seat's line count."""
-        msg = {"id": "m-1", "author": "Rowan", "content": "I go in !yes"}
+        msg = {"id": "m-1", "author": "Rowan", "content": "I go in"}
         for _ in range(4):
             ingest.ingest_message(self.cfg, self.led, msg)
         self.assertEqual(len(self.led.read(etype="qa.inbound")), 1)
-        self.assertEqual(len(self.led.read(etype="uxr.marker")), 1)
 
     def test_distinct_ids_are_all_recorded(self):
         for i in range(3):

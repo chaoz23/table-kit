@@ -82,43 +82,64 @@ a report reads the same tomorrow as it did at midnight. Live callers pass
 
 ### `uxr` — how did it feel from a seat?
 
-`uxr.marker`, `uxr.debrief`.
+`uxr.signal`, `uxr.debrief`.
 
 The only lane that crosses the legibility boundary. Everything else here is
 recoverable from the session file afterwards; none of this is.
 
-Six markers, one token each, typed inline in chat:
+**There is no player-facing input syntax, and that is a hard product
+constraint.** An earlier version of this kit shipped six chat tokens (`!drag`
+and friends). They were cut in 0.2.0. The reason is in `tablekit/uxr.py` at
+length, and briefly: text RPGs handed players verb lists because 1980s parsers
+could not understand a sentence, that workaround is exactly what makes them
+feel like operating a computer, and an agent GM reintroducing it discards its
+only advantage over a parser game. `tests/test_no_player_commands.py` keeps the
+constraint from drifting back.
 
-| marker | the seat is saying | dimension |
+Six internal buckets, never surfaced to anyone at the table:
+
+| bucket | means |
+|---|---|
+| `pacing` | this stretch felt slow from that seat |
+| `floor` | wanted to act and the moment closed first |
+| `comprehension` | lost the thread — a word, or what is happening |
+| `resonance` | that landed |
+| `spotlight` | got to do the thing this character is for |
+| `continuity` | contradicts something already established |
+
+Two of the six are positive on purpose. An instrument that only collects
+grievances teaches a GM to avoid risk, which is a different thing from running
+a good table. `spotlight` is separate from `resonance` because time spent on a
+player's signature capability is not the same as time spent on scene
+description, and conflating them loses the distinction that matters most to the
+person holding that character.
+
+**Three sources, with different weight:**
+
+| source | what it is | weight |
 |---|---|---|
-| `!huh` | I did not follow that | comprehension |
-| `!wait` | I wanted in and the moment passed | floor access |
-| `!yes` | that landed | resonance |
-| `!drag` | this is slow *for me* right now | pacing |
-| `!mine` | I got to do my character's particular thing | spotlight fit |
-| `!off` | that contradicts something established | continuity |
+| `dm` | the agent GM classifying a line it already read | advisory |
+| `local` | an independent model pass over the same transcript | advisory, and a check on `dm` |
+| `debrief` | a plain-English question asked at the close | the high-confidence channel |
 
-Design notes on the vocabulary:
+The debrief is not politeness. It is structural: **a GM that does not notice
+friction cannot record friction**, so inference alone inherits precisely the
+blind spots this lane exists to route around. The `local` pass is the other
+check — and where it and the GM disagree is itself the interesting signal. It
+requires `--keep-text`, which is the honest cost of an independent read.
 
-- **Two of the six are positive.** An instrument that only collects grievances
-  teaches a GM to avoid risk, which is a different thing from teaching them to
-  run a good table.
-- **`!mine` exists because spotlight fit is its own dimension.** Length spent
-  on a player's signature capability is not the same as length spent on scene
-  description, and conflating them loses the distinction that matters most to
-  the player holding that character.
-- **Markers anchor to the beat that caused them**, not to a timestamp, so
-  friction points at something you can go and read.
-- **A note is optional** (`!huh what's a gorse`). When it is absent, the report
-  says the cause was not stated rather than inferring one, and puts the
-  question on the ask-at-the-break list.
+**The fences:**
 
-**The floor.** Below three occurrences, a marker is reported as individual
-moments with their beat numbers — never as a rate or a tendency. Three is not a
-statistical threshold; no N this small is. It is the smallest number that
-cannot be one bad moment plus noise. This rule exists because of a specific
-error: a single "what's a gorse" was once generalised into "unfamiliar diction
-fails at this table," and the player's real position was the opposite.
+- An inferred signal is **advisory in every path and can never become a
+  defect**. Something a model thought someone meant does not get to accuse.
+- Every inferred signal **stores the speaker's own words**. A classification
+  with no quote is refused at write time, because nobody in the room could
+  check it.
+- Below `MIN_PATTERN` (3), the report lists individual moments with beat
+  numbers and refuses to state a rate or a tendency. This is a specific
+  correction: one player asking what a word meant was once generalised into
+  "unfamiliar diction fails at this table", and their real position was the
+  opposite — *"I like the new words, sometimes I will have to ask."*
 
 ### `out` — did it work?
 
@@ -157,7 +178,7 @@ one cue is a finding about the sample, not about the table.
 | `long_beat_words` | 120 | **measured, loosely.** Professional GM median is 8–14 words with about one line in six running long; 120 is well past the tail, so it flags only beats that had better be paying something off. |
 | `max_chunks` | 2 | **transport reasoning.** A beat arriving as three messages is read as three beats and the table answers the first. |
 | `cue_ttl_s`, `roll_ttl_s` | 300 | **judgment, not measurement.** Labelled as such; retune on your own outcome pairs after a few sessions, which is what the `out` lane is for. |
-| marker floor | 3 | **the gorse correction** (above). |
+| signal floor | 3 | **the gorse correction** (above). |
 | `MIN_BEATS` for a report | 3 | a session shorter than this has nothing to report on, and "no defects found" about it would be a lie of omission. |
 
 The honest summary: one default is from live failure, one is loosely

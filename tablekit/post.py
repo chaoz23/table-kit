@@ -2,12 +2,22 @@
 
 Two jobs beyond "send the message".
 
-**1. Mandatory mentions.** If a beat cues an agent seat, that seat's literal
-mention is guaranteed to be in the outgoing text — prepended if the author did
-not include it. This is not a lint that complains afterwards; it is a repair
-that happens before the message leaves, because the failure it prevents is
-invisible at run time. The repair is recorded in the session file, so "how
-often does the GM forget the mention" stays an answerable question.
+**1. Mandatory mentions, and they go at the END.** If a beat cues an agent
+seat, that seat's literal mention is guaranteed to be in the outgoing text —
+appended if the author did not include it. This is not a lint that complains
+afterwards; it is a repair that happens before the message leaves, because the
+failure it prevents is invisible at run time. The repair is recorded in the
+session file, so "how often does the GM forget" stays answerable.
+
+Placement is a craft decision, not a detail. Professional GMs cue players by
+*character name, inside the fiction* — that is the turn signal. A beat that
+opens with a raw platform mention leads with machinery instead of the world,
+which is the same failure the token vocabulary was cut for. So the fiction
+leads and the mention trails.
+
+The one constraint: chat platforms notify per message, so on a beat long
+enough to split, the mention has to appear in the FIRST chunk or the seat is
+notified only at the end. `split_with_mention` handles that.
 
 **2. Splitting is a last resort, and it is reported.** Chat platforms cap
 message length. A beat that arrives as three messages is read as three beats,
@@ -66,12 +76,28 @@ def split(text, limit=CHUNK_LIMIT):
 
 
 def ensure_mention(cfg, text, seat):
-    """Return `(text, repaired)` — the text guaranteed to reach `seat`."""
+    """Return `(text, repaired)` — the text guaranteed to reach `seat`.
+
+    Appended, never prepended: the fiction leads. See the module docstring.
+    """
     if not seat or seat.kind != "agent" or not seat.mention:
         return text, False
     if seat.mention in text:
         return text, False
-    return f"{seat.mention} {text}", True
+    return f"{text.rstrip()} {seat.mention}", True
+
+
+def split_with_mention(text, seat, limit=CHUNK_LIMIT):
+    """Split, then make sure the notifying mention is in the first chunk.
+
+    A trailing mention on a three-chunk beat would notify the seat only once
+    the last message lands — which is worse than useless, because the seat
+    reads the tail first.
+    """
+    chunks = split(text, limit=limit)
+    if len(chunks) > 1 and seat and seat.mention and seat.mention not in chunks[0]:
+        chunks[0] = f"{chunks[0].rstrip()} {seat.mention}"
+    return chunks
 
 
 def discord_send(cfg, text):
@@ -98,7 +124,7 @@ def post(cfg, ledger, text, cue=None, kind=None, send_fn=None):
     send = send_fn or discord_send
     seat = cfg.seat(cue) if cue else None
     text, repaired = ensure_mention(cfg, text, seat)
-    chunks = split(text)
+    chunks = split_with_mention(text, seat)
 
     t0 = time.time()
     ids, error = [], None
