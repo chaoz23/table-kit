@@ -330,6 +330,73 @@ class TestRollRelay(Base):
         self.assertEqual(self.led.read(etype="qa.inbound")[0]["seat"], "rowan")
 
 
+class TestTypedRolls(Base):
+    """Not every table has a relay, and the same table will not have one every
+    night — somebody joins from a phone, an extension is not installed. A roll
+    arriving as ordinary text is a normal case, not a fallback."""
+
+    def _open(self):
+        pairs.open_pair(self.led, "roll", "r1", seat="rowan",
+                        detail="Perception")
+
+    def test_unambiguous_typed_roll_is_consumed(self):
+        self._open()
+        ingest.ingest_message(self.cfg, self.led,
+                              {"id": "t1", "author": "Rowan", "content": "14"})
+        self.assertEqual(pairs.open_now(self.led, "roll"), [])
+        [act] = self.led.read(etype="act")
+        self.assertEqual((act["roll_total"], act["via"]), (14, "typed"))
+
+    def test_natural_twenty_is_understood(self):
+        self._open()
+        ingest.ingest_message(self.cfg, self.led,
+                              {"id": "t2", "author": "Rowan", "content": "nat 20!"})
+        self.assertEqual(self.led.read(etype="act")[0]["roll_total"], 20)
+
+    def test_explicit_sum_uses_the_total_not_the_first_number(self):
+        self._open()
+        ingest.ingest_message(self.cfg, self.led,
+                              {"id": "t3", "author": "Rowan", "content": "18 + 3 = 21"})
+        self.assertEqual(self.led.read(etype="act")[0]["roll_total"], 21)
+
+    def test_ambiguous_number_asks_instead_of_assuming(self):
+        """A wrong total silently consumed corrupts the ledger, and nobody
+        notices until the arithmetic stops making sense."""
+        self._open()
+        ingest.ingest_message(
+            self.cfg, self.led,
+            {"id": "t4", "author": "Rowan",
+             "content": "I move 30 feet and swing twice with my 2 daggers"})
+        self.assertEqual(len(pairs.open_now(self.led, "roll")), 1)
+        self.assertEqual(self.led.read(etype="act"), [])
+        [f] = self.led.read(etype="qc.finding")
+        self.assertEqual(f["check"], "roll_needs_confirming")
+        self.assertEqual(f["severity"], "attention")
+
+    def test_no_detection_when_no_roll_is_outstanding(self):
+        """Numbers in ordinary conversation are just conversation."""
+        ingest.ingest_message(self.cfg, self.led,
+                              {"id": "t5", "author": "Rowan", "content": "14"})
+        self.assertEqual(self.led.read(etype="act"), [])
+        self.assertEqual(self.led.read(etype="qc.finding"), [])
+
+    def test_prose_with_no_number_is_left_alone(self):
+        self._open()
+        ingest.ingest_message(self.cfg, self.led,
+                              {"id": "t6", "author": "Rowan",
+                               "content": "I climb the ladder carefully"})
+        self.assertEqual(len(pairs.open_now(self.led, "roll")), 1)
+        self.assertEqual(self.led.read(etype="qc.finding"), [])
+
+    def test_report_shows_how_rolls_arrived(self):
+        self._open()
+        ingest.ingest_message(self.cfg, self.led,
+                              {"id": "t7", "author": "Rowan", "content": "14"})
+        from tablekit import ux as ux_mod
+        self.assertEqual(ux_mod.transport_stats(self.led)["rolls_by_route"],
+                         {"typed": 1})
+
+
 class TestEngineTap(Base):
     def test_tap_writes_new_log_lines_once(self):
         state = {"log": ["[round 1] Rowan hits", "[round 1] Goblin falls"],

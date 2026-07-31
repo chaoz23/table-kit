@@ -45,7 +45,7 @@ def seat_stats(ledger, cfg=None, now=None):
         end = max(end, now)
     inbound = [r for r in rows if r.get("type") == "qa.inbound"]
     turns = [r for r in rows if r.get("type") == "ux.turn"]
-    markers = [r for r in rows if r.get("type") == "uxr.marker"]
+    signals = [r for r in rows if r.get("type") == "uxr.signal"]
     cues = [r for r in rows if r.get("type") == "out.open" and r.get("pair") == "cue"]
 
     seats = ([s.id for s in cfg.player_seats] if cfg
@@ -57,16 +57,16 @@ def seat_stats(ledger, cfg=None, now=None):
         gaps = [b - a for a, b in zip(stamps, stamps[1:])]
         waits = sorted(r.get("wait_s", 0) for r in turns if r.get("seat") == sid)
         mk = {}
-        for m in markers:
+        for m in signals:
             if m.get("seat") == sid:
-                mk[m["marker"]] = mk.get(m["marker"], 0) + 1
+                mk[m["signal"]] = mk.get(m["signal"], 0) + 1
         out[sid] = {
             "lines": len(mine),
             "words": sum(_f_words(r) for r in mine),
             "cued": sum(1 for c in cues if c.get("seat") == sid),
             "longest_silence_s": round(max(gaps), 1) if gaps else 0.0,
             "median_wait_s": waits[len(waits) // 2] if waits else None,
-            "markers": mk or None,
+            "signals": mk or None,
         }
     total_words = sum(v["words"] for v in out.values())
     gm_words = sum(r.get("words", 0) for r in rows if r.get("type") == "ux.beat")
@@ -115,7 +115,12 @@ def transport_stats(ledger):
     listener = [r for r in rows if r["type"] == "qa.listener"]
     drops = [r for r in listener if r.get("state") in ("down", "reconnect")]
     cmds = [r for r in rows if r["type"] == "qa.command"]
+    rolls = [r for r in ledger.read(etype="act") if r.get("roll_total") is not None]
+    by_route = {}
+    for r in rolls:
+        by_route[r.get("via") or "dm"] = by_route.get(r.get("via") or "dm", 0) + 1
     return {
+        "rolls_by_route": by_route or None,
         "posts": len(posts),
         "post_failures": len(failed),
         "median_post_latency_ms": lat[len(lat) // 2] if lat else None,

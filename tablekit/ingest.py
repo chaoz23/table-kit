@@ -90,6 +90,57 @@ def parse_relay_roll(msg):
     return out
 
 
+#: Explicit "this is my total" phrasings. When one of these fires, a number in
+#: an otherwise chatty message is still trustworthy.
+_TOTAL_CUE = re.compile(
+    r"\b(total|totals?\s+to|=|for\s+a|rolled|roll(?:s|ed)?\s+a|got|i\s+get|"
+    r"that'?s\s+a?|nat(?:ural)?)\b", re.I)
+_NAT = re.compile(r"\bnat(?:ural)?\s*(\d{1,2})\b", re.I)
+_NUM = re.compile(r"(?<![\w.])(-?\d{1,3})(?![\w.])")
+
+
+def detect_typed_roll(text, max_words=14):
+    """Did a player just say their roll in plain language?
+
+    Not every table has a relay, and the same table will not have one every
+    night — somebody joins from a phone, an extension is not installed, a
+    browser is signed out. So a roll arriving as ordinary text is the normal
+    case to support, not the fallback.
+
+    Returns `{"total", "confidence"}` where confidence is:
+
+      * ``high``   — safe to consume automatically
+      * ``low``    — a number is present but the reading is ambiguous, so the
+                     GM is asked to confirm rather than the kit guessing
+      * ``none``   — nothing that looks like a roll
+
+    The gate is deliberately conservative. A wrong total silently consumed is
+    far worse than one the GM had to confirm: it corrupts the ledger and
+    nobody finds out until the arithmetic stops making sense.
+    """
+    t = (text or "").strip()
+    if not t:
+        return {"total": None, "confidence": "none"}
+    nat = _NAT.search(t)
+    if nat:
+        return {"total": int(nat.group(1)), "confidence": "high"}
+    nums = [int(n) for n in _NUM.findall(t)]
+    if not nums:
+        return {"total": None, "confidence": "none"}
+    words = len(t.split())
+    # "14" or "14!" on its own is unambiguous.
+    if len(nums) == 1 and words <= 3:
+        return {"total": nums[0], "confidence": "high"}
+    cued = bool(_TOTAL_CUE.search(t))
+    if len(nums) == 1 and cued and words <= max_words:
+        return {"total": nums[0], "confidence": "high"}
+    # "18 + 3 = 21" — an explicit equals wins over the earlier numbers.
+    eq = re.search(r"=\s*(-?\d{1,3})\b", t)
+    if eq:
+        return {"total": int(eq.group(1)), "confidence": "high"}
+    return {"total": nums[0], "confidence": "low"}
+
+
 def attribute_relay(cfg, msg):
     """Whose roll is this, when a relay bot posted it?
 
@@ -194,6 +245,36 @@ def ingest_message(cfg, ledger, msg, keep_text=False):
                 written.append(pairs.close_pair(
                     ledger, kind, p["id"], outcome, ts=ts,
                     opened_ts=p["opened_ts"]))
+
+    # No relay this time? A roll can still arrive as ordinary text — somebody
+    # joined from a phone, the extension is not installed, the browser is
+    # signed out. Detect it, but only while a roll is actually outstanding for
+    # this seat, and only consume it when the reading is unambiguous.
+    if not via:
+        open_rolls = [p for p in pairs.open_now(ledger, "roll")
+                      if p.get("seat") == sid]
+        if open_rolls:
+            det = detect_typed_roll(text)
+            p = open_rolls[0]
+            if det["confidence"] == "high":
+                written.append(ledger.append(
+                    "act", ts=ts, actor=(seat.display if seat else sid),
+                    text=f"{p.get('detail') or 'roll'}: {det['total']}",
+                    roll_total=det["total"], via="typed"))
+                written.append(pairs.close_pair(
+                    ledger, "roll", p["id"], "consumed", ts=ts,
+                    opened_ts=p["opened_ts"], detail="typed in chat"))
+            elif det["confidence"] == "low":
+                # Ask, do not assume. A wrong total silently consumed corrupts
+                # the ledger and nobody notices until the arithmetic stops
+                # making sense.
+                written.append(ledger.append(
+                    "qc.finding", ts=ts, check="roll_needs_confirming",
+                    severity="attention", seat=sid,
+                    detail=f"{seat.display if seat else sid} said something with "
+                           f"a number in it while a roll was open — was that "
+                           f"a {det['total']}?",
+                    evidence=text[:120]))
     return written
 
 

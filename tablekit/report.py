@@ -214,6 +214,9 @@ def render(rep):
     add(_line("posts", t["posts"]))
     add(_line("post failures", t["post_failures"]))
     add(_line("median post latency", t["median_post_latency_ms"], " ms"))
+    if t.get("rolls_by_route"):
+        routes = ", ".join(f"{k} {v}" for k, v in sorted(t["rolls_by_route"].items()))
+        add(_line("how rolls arrived", routes))
     add(_line("listener interruptions", t["listener_interruptions"]))
     add(_line("command failures", f"{t['command_failures']}/{t['commands']}"))
     if t["malformed_records"]:

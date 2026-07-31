@@ -94,6 +94,20 @@ This is also why the seat panel we scoped is unnecessary for D&D Beyond
 tables: Beyond20 already provides the click-a-skill affordance, so the player
 never types dice syntax, which is the whole point of rule 4.
 
+**But never assume the relay is there.** The same table will not have it every
+night — somebody joins from a phone, an extension is not installed, a browser
+is signed out. So a roll arriving as ordinary text is a supported case, not a
+fallback: while a roll is outstanding for a seat, `detect_typed_roll` reads
+"14", "nat 20", "18 + 3 = 21" and consumes it.
+
+The gate is deliberately conservative, and when it is unsure it **asks**:
+an ambiguous number produces a `roll_needs_confirming` attention item naming
+what it thinks it saw, and the pair stays open. A wrong total silently consumed
+corrupts the ledger and nobody notices until the arithmetic stops making sense.
+
+The report shows `how rolls arrived` (relay / typed / dm), so which pattern
+actually held on a given night is a recorded fact rather than an assumption.
+
 ## 7. Seat sync
 
 The kit resolves a chat display name to a seat id through `aliases`. Keep that
