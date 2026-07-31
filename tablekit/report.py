@@ -65,7 +65,11 @@ def build(ledger, cfg=None, min_pattern=uxr_mod.MIN_PATTERN):
     # found because nothing looked, and the report said so in the language of a
     # clean bill of health. A comforting false negative is the worst failure
     # this kit can have — it is the exact thing the kit was built to prevent.
-    qc_ran_live = any(r.get("type") in ("qc.finding", "qc.pass") for r in rows)
+    # Only `qc.run` counts. A `qc.finding` proves something was noticed, not
+    # that anyone checked — ingest emits findings of its own — and the first
+    # version of this accepted those, which put the "Defects — none" claim
+    # straight back.
+    qc_ran_live = any(r.get("type") == "qc.run" for r in rows)
 
     # Sweep now regardless, so there is always a verdict rather than only
     # whatever happened to be recorded. Post-hoc findings are labelled: they

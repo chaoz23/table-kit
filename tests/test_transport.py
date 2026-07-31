@@ -525,3 +525,21 @@ class TestMentionFactNotRescan(Base):
                         text="Vesh, go.")
         checks = [f["check"] for f in detector.check(self.led, self.cfg)]
         self.assertIn("undeliverable_cue", checks)
+
+    def test_truncated_text_is_never_accused(self):
+        """Ambiguity produces silence. A beat stored at the truncation limit is
+        known-incomplete evidence — a trailing mention may simply have been cut
+        — so it cannot support a finding. This protects sessions recorded
+        before mention_ok existed."""
+        from tablekit import detector
+        self.led.append("ux.beat", words=80, chunks=1, cued_seat="vesh",
+                        text="x" * detector._STORED_TEXT_LIMIT)
+        checks = [f["check"] for f in detector.check(self.led, self.cfg)]
+        self.assertNotIn("undeliverable_cue", checks)
+
+    def test_short_text_without_the_flag_is_still_accused(self):
+        from tablekit import detector
+        self.led.append("ux.beat", words=5, chunks=1, cued_seat="vesh",
+                        text="Vesh, go.")
+        checks = [f["check"] for f in detector.check(self.led, self.cfg)]
+        self.assertIn("undeliverable_cue", checks)

@@ -713,10 +713,15 @@ class TestUncheckedIsNotClean(TempLedger):
         self.assertIn("Defects — none", report.render(rep))
         self.assertEqual(rep["qc"]["live_only_unchecked"], [])
 
-    def test_a_recorded_finding_also_counts_as_having_checked(self):
+    def test_a_bare_finding_does_NOT_count_as_having_checked(self):
+        """Superseded: this originally asserted that any qc.finding meant the
+        session had been checked. It does not. Ingest emits findings of its own
+        (`roll_needs_confirming`), so that rule let an unchecked session claim
+        'Defects — none' again — the same lie one level down. Only `qc.run`,
+        written solely by detector.record(), is proof."""
         self._session()
         self.led.append("qc.finding", check="x", detail="d", severity="attention")
-        self.assertTrue(report.build(self.led, self.cfg)["qc"]["ran_live"])
+        self.assertFalse(report.build(self.led, self.cfg)["qc"]["ran_live"])
 
     def test_post_hoc_sweep_still_finds_what_it_can(self):
         """Never running qc must not mean the report has no verdict at all."""
@@ -757,3 +762,29 @@ class TestUncheckedIsNotClean(TempLedger):
                   if f.get("found") == "post-hoc"]
         for c in detector.LIVE_ONLY_CHECKS:
             self.assertNotIn(c, checks)
+
+    def test_a_finding_from_elsewhere_does_not_count_as_having_checked(self):
+        """The second layer of the same lie. `roll_needs_confirming` is emitted
+        by INGEST, not by the qc suite, so a session where nobody ran qc had
+        findings in it and the report went back to claiming clean."""
+        self._session()
+        self.led.append("qc.finding", check="roll_needs_confirming",
+                        detail="was that a 14?", severity="attention",
+                        seat="rowan")
+        rep = report.build(self.led, self.cfg)
+        self.assertFalse(rep["qc"]["ran_live"])
+        self.assertIn("NOT CHECKED DURING PLAY", report.render(rep))
+
+    def test_running_the_checks_emits_the_proof(self):
+        self._session()
+        detector.record(self.led, [])
+        self.assertEqual(len(self.led.read(etype="qc.run")), 1)
+        self.assertTrue(report.build(self.led, self.cfg)["qc"]["ran_live"])
+
+    def test_qc_run_is_emitted_even_when_findings_exist(self):
+        self._session()
+        detector.record(self.led, [{"check": "x", "severity": "defect",
+                                    "detail": "d", "evidence": None,
+                                    "seat": None}])
+        self.assertEqual(len(self.led.read(etype="qc.run")), 1)
+        self.assertTrue(report.build(self.led, self.cfg)["qc"]["ran_live"])

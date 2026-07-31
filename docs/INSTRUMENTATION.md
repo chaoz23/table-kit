@@ -158,6 +158,13 @@ The report now distinguishes three states:
   always a verdict, and its findings are labelled `[found post-hoc]` because
   that is weaker evidence than a check run while the table sat there
 
+"Was this session checked?" is answered **only** by a `qc.run` event, which
+`detector.record()` is the sole writer of. The first version of this accepted
+any `qc.finding` as proof — but ingest emits findings of its own
+(`roll_needs_confirming`), so an unchecked session had findings in it and went
+straight back to claiming clean. Inferring "someone examined this" from a side
+effect of something else is the same false negative one level down.
+
 The sweep deliberately **excludes the live-only checks**. It could technically
 fire `seat_quiet` when the last beat happens to be recent, but doing so would
 contradict the line printed directly above it. A sweep that claims to have done

@@ -70,6 +70,9 @@ SCHEMA = {
     # --- qc: is the refereeing correct --------------------------------
     "qc.finding": ("check", "detail"),
     "qc.pass":    ("checks",),
+    # Written ONLY by detector.record(), so "was this session checked?" cannot
+    # be satisfied by a finding that some other code path happened to emit.
+    "qc.run":     ("findings",),
     "qc.mark":    ("narrated_through",),
     # --- ux: objective seat experience --------------------------------
     "ux.beat":      ("words", "chunks"),

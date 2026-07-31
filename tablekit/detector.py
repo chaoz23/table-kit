@@ -33,6 +33,10 @@ from . import pairs as pairs_mod
 #: rather than implying it looked.
 LIVE_ONLY_CHECKS = ("seat_quiet", "unnarrated")
 
+#: `ux.beat.text` is stored truncated. A beat at exactly this length is
+#: known-incomplete evidence, so it cannot support an accusation.
+_STORED_TEXT_LIMIT = 400
+
 
 def _f(check, severity, detail, evidence=None, seat=None):
     return {"check": check, "severity": severity, "detail": detail,
@@ -88,6 +92,16 @@ def check(ledger, cfg=None, now=None, state=None):
                 # The sender already established this at send time, on the
                 # untruncated text. Trust it over a re-scan of a stored copy
                 # that may have lost a trailing mention to the 400-char cut.
+                continue
+            btext = b.get("text") or ""
+            if len(btext) >= _STORED_TEXT_LIMIT:
+                # The stored text is at the truncation limit, so it is KNOWN
+                # INCOMPLETE — a trailing mention may simply have been cut off.
+                # Accusing on evidence we know is partial is precisely the
+                # no-false-accusation rule this module opens with: ambiguity
+                # produces silence, not a finding. (Beats written by 0.5.0+
+                # carry `mention_ok` and never reach this branch; this protects
+                # sessions recorded before that.)
                 continue
             seat = cfg.seat(b["cued_seat"])
             problem = cfg.mention_check(b.get("text", ""), seat)
@@ -179,12 +193,22 @@ def check(ledger, cfg=None, now=None, state=None):
 
 
 def record(ledger, findings):
-    """Write findings into the session file so the report can see them later."""
+    """Write findings into the session file so the report can see them later.
+
+    Always emits `qc.run` first. That event is the ONLY evidence that the
+    checks were actually run, and it exists because the first version of this
+    inferred "someone checked" from the presence of any `qc.finding` — which
+    ingest also emits for `roll_needs_confirming`. A session where nobody ran
+    qc therefore looked checked, and the report went back to claiming clean.
+    Deriving "was this examined?" from a side effect of something else is the
+    same false-negative one level down.
+    """
+    out = [ledger.append("qc.run", findings=len(findings))]
     if not findings:
-        return [ledger.append("qc.pass", checks=6)]
-    return [ledger.append("qc.finding", check=f["check"], detail=f["detail"],
-                          severity=f["severity"], evidence=f.get("evidence"),
-                          seat=f.get("seat")) for f in findings]
+        return out + [ledger.append("qc.pass", checks=6)]
+    return out + [ledger.append("qc.finding", check=f["check"], detail=f["detail"],
+                               severity=f["severity"], evidence=f.get("evidence"),
+                               seat=f.get("seat")) for f in findings]
 
 
 def format_findings(findings):
