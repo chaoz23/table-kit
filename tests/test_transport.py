@@ -731,6 +731,12 @@ class TestPostingSaga(Base):
                     raise RuntimeError("crash after remote send")
                 return super().append(etype, **fields)
 
+            def append_once(self, etype, unique, **fields):
+                if etype == "qa.post.receipt" and not self.crashed:
+                    self.crashed = True
+                    raise RuntimeError("crash after remote send")
+                return super().append_once(etype, unique, **fields)
+
         crash_ledger = CrashReceiptLedger(self.led.path)
         remote = []
 
@@ -767,6 +773,12 @@ class TestPostingSaga(Base):
                     raise RuntimeError("crash before finalization")
                 return super().append(etype, **fields)
 
+            def append_once(self, etype, unique, **fields):
+                if etype == "ux.beat" and not self.crashed:
+                    self.crashed = True
+                    raise RuntimeError("crash before finalization")
+                return super().append_once(etype, unique, **fields)
+
         crash_ledger = CrashBeatLedger(self.led.path)
         with self.assertRaises(RuntimeError):
             post.post(self.cfg, crash_ledger, "hello", send_fn=self.send,
@@ -797,6 +809,14 @@ class TestPostingSaga(Base):
                     def append(inner_self, etype, **fields):
                         row = super(CrashAfterLedger, inner_self).append(
                             etype, **fields)
+                        if etype == step and not inner_self.crashed:
+                            inner_self.crashed = True
+                            raise RuntimeError(f"crash after {step}")
+                        return row
+
+                    def append_once(inner_self, etype, unique, **fields):
+                        row = super(CrashAfterLedger, inner_self).append_once(
+                            etype, unique, **fields)
                         if etype == step and not inner_self.crashed:
                             inner_self.crashed = True
                             raise RuntimeError(f"crash after {step}")
@@ -835,6 +855,13 @@ class TestPostingSaga(Base):
 
             def append(self, etype, **fields):
                 row = super().append(etype, **fields)
+                if etype == self.target and not self.crashed:
+                    self.crashed = True
+                    raise RuntimeError(f"crash after {etype}")
+                return row
+
+            def append_once(self, etype, unique, **fields):
+                row = super().append_once(etype, unique, **fields)
                 if etype == self.target and not self.crashed:
                     self.crashed = True
                     raise RuntimeError(f"crash after {etype}")
@@ -964,6 +991,11 @@ class TestPostingSaga(Base):
                     raise RuntimeError("receipt crash")
                 return super().append(etype, **fields)
 
+            def append_once(self, etype, unique, **fields):
+                if etype == "qa.post.receipt":
+                    raise RuntimeError("receipt crash")
+                return super().append_once(etype, unique, **fields)
+
         with self.assertRaises(RuntimeError):
             post.post(self.cfg, CrashReceiptLedger(self.led.path), "hello",
                       send_fn=self.send, operation_id="history-gap")
@@ -982,6 +1014,11 @@ class TestPostingSaga(Base):
                 if etype == "qa.post.receipt":
                     raise RuntimeError("receipt crash")
                 return super().append(etype, **fields)
+
+            def append_once(self, etype, unique, **fields):
+                if etype == "qa.post.receipt":
+                    raise RuntimeError("receipt crash")
+                return super().append_once(etype, unique, **fields)
 
         captured = []
 
@@ -1013,6 +1050,11 @@ class TestPostingSaga(Base):
                 if etype == "qa.post.receipt":
                     raise RuntimeError("receipt crash")
                 return super().append(etype, **fields)
+
+            def append_once(self, etype, unique, **fields):
+                if etype == "qa.post.receipt":
+                    raise RuntimeError("receipt crash")
+                return super().append_once(etype, unique, **fields)
 
         remote = []
 

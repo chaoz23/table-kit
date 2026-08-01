@@ -250,7 +250,9 @@ class TestDurableReceipts(Harness):
         self.ledger.append("qa.route", source="discord", source_id="q-1",
                            status="quarantined", reason="unknown_principal")
         built = report.build(self.ledger, self.cfg)
-        self.assertEqual(report.exit_code(built), 1)
+        # A quarantine is actionable, but absent current QC coverage is the
+        # stronger fail-closed state and therefore keeps the report at 2.
+        self.assertEqual(report.exit_code(built), 2)
 
     def test_invalid_timestamp_is_receipted_and_deduplicated_before_rejection(self):
         msg = human("bad-time", ts="yesterday")
