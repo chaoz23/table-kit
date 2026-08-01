@@ -16,6 +16,7 @@ Exit codes, per the family convention:
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -60,13 +61,78 @@ USAGE = """tablekit — instrumentation for a live hybrid table
 
 
 def _flag(args, name, default=None, takes_value=True):
-    if name not in args:
+    positions = [i for i, value in enumerate(args) if value == name]
+    if not positions:
         return default
-    i = args.index(name)
+    if len(positions) > 1:
+        raise ConfigError(f"{name}: flag may be supplied only once")
+    i = positions[0]
     args.pop(i)
     if not takes_value:
         return True
-    return args.pop(i) if i < len(args) else default
+    if i >= len(args) or args[i].startswith("--"):
+        raise ConfigError(f"{name}: expected a value")
+    return args.pop(i)
+
+
+def _unknown_options(args):
+    unknown = [value for value in args if value.startswith("-")]
+    if unknown:
+        raise ConfigError(
+            f"unknown option(s): {', '.join(unknown)}; see `tablekit --help`")
+
+
+def _no_positionals(args, command):
+    _unknown_options(args)
+    if args:
+        raise ConfigError(
+            f"{command}: unexpected positional argument(s): {' '.join(args)}")
+
+
+def _text_argument(args, command, flagged=None, required=False, default=None):
+    _unknown_options(args)
+    if flagged is not None and args:
+        raise ConfigError(
+            f"{command}: provide text either positionally or by flag, not both")
+    if len(args) > 1:
+        raise ConfigError(f"{command}: expected one quoted text argument")
+    value = flagged if flagged is not None else (args[0] if args else default)
+    if required and (not isinstance(value, str) or not value.strip()):
+        raise ConfigError(f"{command}: expected non-empty text")
+    return value
+
+
+def _integer(value, flag, minimum=None, maximum=None):
+    if isinstance(value, bool):
+        raise ConfigError(f"{flag}: expected an integer")
+    try:
+        # int("1.0") is deliberately refused; accepting it differs by caller.
+        parsed = int(value)
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"{flag}: expected an integer") from e
+    if isinstance(value, str) and str(parsed) != value.strip().lstrip("+"):
+        raise ConfigError(f"{flag}: expected an integer")
+    if minimum is not None and parsed < minimum:
+        raise ConfigError(f"{flag}: must be at least {minimum}")
+    if maximum is not None and parsed > maximum:
+        raise ConfigError(f"{flag}: must be at most {maximum}")
+    return parsed
+
+
+def _finite_number(value, flag, minimum=None, maximum=None):
+    if isinstance(value, bool):
+        raise ConfigError(f"{flag}: expected a finite number")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"{flag}: expected a finite number") from e
+    if not math.isfinite(parsed):
+        raise ConfigError(f"{flag}: expected a finite number")
+    if minimum is not None and parsed < minimum:
+        raise ConfigError(f"{flag}: must be at least {minimum}")
+    if maximum is not None and parsed > maximum:
+        raise ConfigError(f"{flag}: must be at most {maximum}")
+    return parsed
 
 
 def _ctx(args):
@@ -74,18 +140,41 @@ def _ctx(args):
     cfg_path = _flag(args, "--config")
     session = _flag(args, "--session")
     ledger_path = _flag(args, "--ledger")
+    if cfg_path is not None and not cfg_path.strip():
+        raise ConfigError("--config: expected a non-empty path")
+    if session is not None and not session.strip():
+        raise ConfigError("--session: expected a non-empty ID")
+    if ledger_path is not None and not ledger_path.strip():
+        raise ConfigError("--ledger: expected a non-empty path")
     cfg = None
-    try:
-        cfg = load_config(cfg_path)
-    except ConfigError:
-        if cfg_path:
-            raise
-    if not ledger_path:
+    env_cfg = os.environ.get("TABLE_CONFIG")
+    if cfg_path is not None or env_cfg:
+        cfg = load_config(cfg_path or env_cfg)
+    elif os.path.lexists("table.json"):
+        # An implicit config is optional only when absent. If present but bad,
+        # it is authoritative input and must fail before a fallback write.
+        cfg = load_config("table.json")
+    if session is not None and ledger_path is not None:
+        raise ConfigError("--session and --ledger are mutually exclusive")
+    if session is not None and not cfg:
+        raise ConfigError("--session requires a table config with data_dir")
+    if ledger_path is None:
         if cfg:
             ledger_path = cfg.ledger_path(session)
         else:
             ledger_path = os.environ.get("TABLE_LEDGER", "./table-data/session.jsonl")
+    _unknown_options(args)
     return cfg, Ledger(ledger_path)
+
+
+def _known_seat(cfg, name, flag="--seat"):
+    if not cfg or not name:
+        return None
+    seat = cfg.seat(name)
+    if not seat:
+        known = ", ".join(s.id for s in cfg.seats)
+        raise ConfigError(f"{flag}: unknown seat {name!r}; known seats: {known}")
+    return seat
 
 
 def _seat_id(cfg, name):
@@ -96,15 +185,19 @@ def _seat_id(cfg, name):
 
 
 def cmd_init(args):
+    _unknown_options(args)
+    if len(args) > 1:
+        raise ConfigError("init: expected at most one config path")
     path = args[0] if args else "table.json"
-    if os.path.exists(path):
-        print(f"{path} already exists — not overwriting", file=sys.stderr)
-        return 2
     example = os.path.join(os.path.dirname(__file__), "table.example.json")
     with open(example) as f:
         text = f.read()
-    with open(path, "w") as f:
-        f.write(text)
+    try:
+        with open(path, "x") as f:
+            f.write(text)
+    except FileExistsError:
+        print(f"{path} already exists — not overwriting", file=sys.stderr)
+        return 2
     print(f"wrote {path}")
     print("Edit it: seats, and a literal 'mention' for every agent seat.")
     return 0
@@ -128,7 +221,8 @@ def cmd_signal(args):
         return 2
     cfg, led = _ctx(args)
     # _ctx strips the global flags, so anything left is a real positional.
-    quote = quote_flag or (args[0] if args else "")
+    quote = _text_argument(args, "signal", quote_flag, required=True)
+    _known_seat(cfg, seat)
     try:
         rec = uxr.record_signal(led, _seat_id(cfg, seat), kind, quote,
                                 source=source, note=note)
@@ -151,7 +245,13 @@ def cmd_debrief(args):
     a = _flag(args, "--a")
     kind = _flag(args, "--kind")
     cfg, led = _ctx(args)
-    if not (seat and q and a):
+    _no_positionals(args, "debrief")
+    supplied = [seat is not None, q is not None, a is not None]
+    if any(supplied) and not all(supplied):
+        raise ConfigError("debrief: --seat, --q and --a must be supplied together")
+    if not any(supplied):
+        if kind is not None:
+            raise ConfigError("debrief: --kind is valid only when recording an answer")
         print("Ask these at the end, in your own words:\n")
         for item in uxr.debrief_questions():
             print(f"  [{item['signal']}] {item['question']}")
@@ -159,6 +259,7 @@ def cmd_debrief(args):
         print('  tablekit debrief --seat S --q "<what you asked>" '
               '--a "<what they said>" [--kind pacing]')
         return 0
+    _known_seat(cfg, seat)
     try:
         uxr.record_debrief(led, _seat_id(cfg, seat), q, a, signal=kind)
     except uxr.SignalError as e:
@@ -170,15 +271,14 @@ def cmd_debrief(args):
 
 def cmd_beat(args):
     cue = _flag(args, "--cue")
-    chunks = int(_flag(args, "--chunks", 1))
+    chunks = _integer(_flag(args, "--chunks", 1), "--chunks", 1, 100)
     kind = _flag(args, "--kind")
     text_flag = _flag(args, "--text")
+    if kind is not None and kind not in ("scene", "combat", "ooc"):
+        raise ConfigError("--kind: expected scene, combat or ooc")
     cfg, led = _ctx(args)
-    text = text_flag or (args[0] if args else "")
-    if not text:
-        print("beat: needs the text of the beat", file=sys.stderr)
-        return 2
-    seat = cfg.seat(cue) if (cfg and cue) else None
+    text = _text_argument(args, "beat", text_flag, required=True)
+    seat = _known_seat(cfg, cue, "--cue")
     rec = led.append("ux.beat", words=len(text.split()), chunks=chunks,
                      kind=kind, cued_seat=(seat.id if seat else cue),
                      text=text[:400])
@@ -207,7 +307,8 @@ def cmd_inbound(args):
         print("inbound: --seat is required", file=sys.stderr)
         return 2
     cfg, led = _ctx(args)
-    text = text_flag or (args[0] if args else "")
+    text = _text_argument(args, "inbound", text_flag, required=True)
+    _known_seat(cfg, seat)
     sid = _seat_id(cfg, seat)
     led.append("qa.inbound", seat=sid, chars=len(text), words=len(text.split()))
     closed = []
@@ -230,12 +331,15 @@ def cmd_inbound(args):
 def cmd_roll(args):
     seat = _flag(args, "--seat")
     dc = _flag(args, "--dc")
+    if not seat:
+        raise ConfigError("roll: --seat is required")
+    parsed_dc = _integer(dc, "--dc", 0, 100) if dc is not None else None
     cfg, led = _ctx(args)
-    detail = args[0] if args else "roll called"
-    s = cfg.seat(seat) if (cfg and seat) else None
+    detail = _text_argument(args, "roll", required=False, default="roll called")
+    s = _known_seat(cfg, seat)
     pid = pairs.new_id("roll")
     pairs.open_pair(led, "roll", pid, seat=_seat_id(cfg, seat), detail=detail,
-                    dc=int(dc) if dc else None,
+                    dc=parsed_dc,
                     rolled_by=(s.rolls if s else None))
     out = [f"roll pair {pid} open — close it with: tablekit consumed {pid}"]
     if dc:
@@ -258,10 +362,7 @@ def cmd_roll(args):
 def cmd_consumed(args):
     outcome = _flag(args, "--outcome", "consumed")
     _cfg, led = _ctx(args)
-    if not args:
-        print("consumed: needs a pair id (see `tablekit pairs`)", file=sys.stderr)
-        return 2
-    pid = args[0]
+    pid = _text_argument(args, "consumed", required=True)
     match = [p for p in pairs.open_now(led) if p["id"] == pid]
     if not match:
         print(f"no open pair {pid}", file=sys.stderr)
@@ -278,6 +379,8 @@ def cmd_checkin(args):
         print("checkin: --seat is required", file=sys.stderr)
         return 2
     cfg, led = _ctx(args)
+    _no_positionals(args, "checkin")
+    _known_seat(cfg, seat)
     sid = _seat_id(cfg, seat)
     pid = pairs.new_id("checkin")
     pairs.open_pair(led, "checkin", pid, seat=sid, detail="checked on a quiet seat")
@@ -287,11 +390,13 @@ def cmd_checkin(args):
 
 def cmd_turn(args):
     seat = _flag(args, "--seat")
-    wait = float(_flag(args, "--wait", 0) or 0)
+    wait = _finite_number(_flag(args, "--wait", 0), "--wait", 0, 86400)
     if not seat:
         print("turn: --seat is required", file=sys.stderr)
         return 2
     cfg, led = _ctx(args)
+    _no_positionals(args, "turn")
+    _known_seat(cfg, seat)
     led.append("ux.turn", seat=_seat_id(cfg, seat), wait_s=wait)
     print(f"turn recorded for {_seat_id(cfg, seat)}")
     return 0
@@ -310,6 +415,12 @@ def cmd_park(args):
     show = _flag(args, "--list", False, takes_value=False)
     done = _flag(args, "--done")
     cfg, led = _ctx(args)
+    if show and done is not None:
+        raise ConfigError("park: --list and --done are mutually exclusive")
+    if show and args:
+        raise ConfigError("park: --list does not accept a detail")
+    if done is not None and args:
+        raise ConfigError("park: provide the completed detail only with --done")
     lot = Ledger(os.path.join(cfg.data_dir if cfg else ".", "parked.jsonl"))
 
     if show:
@@ -351,10 +462,16 @@ def cmd_qc(args):
     do_record = _flag(args, "--record", False, takes_value=False)
     as_json = _flag(args, "--json", False, takes_value=False)
     cfg, led = _ctx(args)
+    _no_positionals(args, "qc")
     state = None
     if state_path:
-        with open(state_path) as f:
-            state = json.load(f)
+        try:
+            with open(state_path) as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            raise ConfigError(f"--state: cannot read valid JSON from {state_path}: {e}") from e
+        if not isinstance(state, dict):
+            raise ConfigError("--state: expected a JSON object")
     findings = detector.check(led, cfg, state=state)
     if do_record:
         detector.record(led, findings)
@@ -368,6 +485,7 @@ def cmd_qc(args):
 def cmd_pairs(args):
     as_json = _flag(args, "--json", False, takes_value=False)
     _cfg, led = _ctx(args)
+    _no_positionals(args, "pairs")
     open_p = pairs.open_now(led)
     if as_json:
         print(json.dumps(open_p, indent=1))
@@ -385,6 +503,7 @@ def cmd_pairs(args):
 
 def cmd_sweep(args):
     cfg, led = _ctx(args)
+    _no_positionals(args, "sweep")
     written = pairs.sweep(led, ttls=(cfg.thresholds if cfg else {}))
     if not written:
         print("nothing to expire")
@@ -398,6 +517,7 @@ def cmd_report(args):
     as_json = _flag(args, "--json", False, takes_value=False)
     out_path = _flag(args, "--out")
     cfg, led = _ctx(args)
+    _no_positionals(args, "report")
     rep = report.build(led, cfg)
     text = report.to_json(rep) if as_json else report.render(rep)
     if out_path:
@@ -409,7 +529,9 @@ def cmd_report(args):
     return report.exit_code(rep)
 
 
-def cmd_schema(_args):
+def cmd_schema(args):
+    _cfg, _led = _ctx(args)
+    _no_positionals(args, "schema")
     print(json.dumps({
         "version": __version__,
         "event_types": {k: list(v) for k, v in SCHEMA.items()},
@@ -452,6 +574,9 @@ def main(argv=None):
         return 2
     except FileNotFoundError as e:
         print(f"{cmd}: {e}", file=sys.stderr)
+        return 2
+    except OSError as e:
+        print(f"{cmd}: local I/O failed: {e}", file=sys.stderr)
         return 2
 
 

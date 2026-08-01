@@ -56,7 +56,7 @@ def check(ledger, cfg=None, now=None, state=None):
     """
     now = now if now is not None else time.time()
     thr = (cfg.thresholds if cfg else {})
-    rows = ledger.read()
+    rows = ledger.records()
     findings = []
     beats = _gm_beats(rows)
     last_beat = beats[-1] if beats else None

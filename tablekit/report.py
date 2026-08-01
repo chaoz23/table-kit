@@ -34,7 +34,7 @@ MIN_BEATS = 3
 
 
 def build(ledger, cfg=None, min_pattern=uxr_mod.MIN_PATTERN):
-    rows = ledger.read()
+    rows = ledger.records()
     beats = ledger.beats()
     signals = [r for r in rows if r.get("type") == "uxr.signal"]
     debriefs = [r for r in rows if r.get("type") == "uxr.debrief"]

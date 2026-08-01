@@ -37,7 +37,7 @@ def seat_stats(ledger, cfg=None, now=None):
     callers who want "how long has this seat been quiet *right now*" pass
     `now` — and the detector, which is the thing that accuses, always does.
     """
-    rows = ledger.read()
+    rows = ledger.records()
     start, end, _ = session_span(rows)
     if start is None:
         return {}
@@ -94,7 +94,7 @@ def beat_stats(ledger):
         return {"beats": 0}
     words = sorted(b.get("words", 0) for b in beats)
     chunks = [b.get("chunks", 1) for b in beats]
-    start, end, span = session_span(ledger.read())
+    start, end, span = session_span(ledger.records())
     return {
         "beats": len(beats),
         "median_words": words[len(words) // 2],

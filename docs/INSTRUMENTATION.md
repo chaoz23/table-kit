@@ -19,6 +19,15 @@ Unknown event types are **refused at write time**. A typo that lands in the
 file as an unreadable record is worse than a crash, because months later it
 reads as an absence rather than an error.
 
+Every decoded row is validated again on read. Invalid JSON, non-object rows,
+unknown event types, missing fields, wrong required-field types, non-finite
+numbers, and oversized lines become line-local `_malformed` diagnostics in an
+unfiltered audit read. They are excluded from typed and lane reads, so corrupt
+input cannot become a beat, close a pair, or change a denominator. See
+[DATA_SAFETY.md](DATA_SAFETY.md) for the storage and authority boundary.
+Internal state and metric consumers use the schema-valid `Ledger.records()`
+view; `Ledger.read()` with no filter remains the diagnostic audit surface.
+
 ## The lanes
 
 ### `qa` — did the machinery work?

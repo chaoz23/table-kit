@@ -158,6 +158,8 @@ session was fine."
   schema, and the provenance of every default
 - [docs/TRANSPORT.md](docs/TRANSPORT.md) — mandatory mentions, the relay tax,
   cursor ownership, and the other things that cost an evening to learn
+- [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md) — paths, permissions, durability,
+  plaintext storage, and the current integrity boundary
 - [bootstrap/CORE.md](bootstrap/CORE.md) — if an agent is about to GM for the
   first time, this is the page to hand it
 
@@ -167,5 +169,8 @@ session was fine."
 touched by anyone at the table. `tablekit schema` prints the event schema,
 signal buckets and exit codes as JSON. The session file is JSONL with one
 object per line and a documented type registry; reading it needs no library.
+Treat it as table-private data and as evidence, not a cryptographically trusted
+audit log; the exact boundary is documented in
+[DATA_SAFETY.md](docs/DATA_SAFETY.md).
 
 MIT.

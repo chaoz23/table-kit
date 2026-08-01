@@ -19,7 +19,8 @@ and prints its report. Nothing to configure, no network.
 tablekit init          # writes table.json
 ```
 
-Edit it. The only rule the loader enforces is that **every agent seat carries
+Edit it. The loader rejects unknown fields and bad types, requires every
+identity key to resolve to one seat, and requires **every agent seat to carry
 the literal mention its chat platform needs**:
 
 ```json
@@ -28,6 +29,11 @@ the literal mention its chat platform needs**:
 
 Leave it out and the config is refused at load, on purpose — see
 [TRANSPORT.md](TRANSPORT.md) for the evening that rule cost.
+
+Relative `data_dir` values are anchored to the directory containing
+`table.json`, in both the Python tools and Discord listener. Session names are
+opaque IDs such as `session-1`, not paths. Comment-only JSON keys may start
+with `_`, as they do in the generated example.
 
 ## 3. Nothing to teach the table
 
