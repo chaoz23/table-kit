@@ -809,7 +809,9 @@ class TestCLI(TempLedger):
         common = ["--ledger", self.led.path, "--config", cfg_path]
         cli.main(["beat", "<@123> Vesh, the door opens.", "--cue", "vesh"] + common)
         self.assertEqual(len(pairs.open_now(self.led, "cue")), 1)
-        cli.main(["inbound", "--seat", "vesh", "--text", "I open it !yes"] + common)
+        pid = pairs.open_now(self.led, "cue")[0]["id"]
+        cli.main(["inbound", "--seat", "vesh", "--pair", pid,
+                  "--text", "I open it !yes"] + common)
         self.assertEqual(pairs.open_now(self.led, "cue"), [])
         self.assertEqual(len(self.led.read(lane="uxr")), 0)
 

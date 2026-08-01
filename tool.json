@@ -6,10 +6,10 @@
   "subcommands": {
    "init [path]": "Write a starter table.json. Exit 2 if the file exists.",
    "beat \"<text>\" [--cue SEAT] [--chunks N]": "Record a GM beat; opens a cue pair and checks the cue is deliverable. Exit 1 if the cue would be dropped in transit.",
-   "inbound --seat S --text \"...\" [--pair ID]": "Record what a seat said (who spoke and how much; prose is not stored by default) and close at most one compatible cue/checkin pair. Without --pair the obligation must be unique; ambiguity is refused. Player text is never parsed for commands or keywords.",
+   "inbound --seat S --text \"...\" [--pair ID]": "Record what a seat said (who spoke and how much; prose is not stored by default). Closing a compatible cue/checkin pair requires --pair ID even when only one candidate is open; missing correlation is quarantined and the candidate IDs remain visible. Player text is never parsed for commands or keywords.",
    "roll --seat S \"<what for>\"": "Open a roll outcome pair.",
    "consumed <pair-id> [--outcome ...]": "Close one explicit pair using an outcome valid for that pair kind. Exit 2 for unknown, closed, mismatched, or invalid lifecycle transitions.",
-   "checkin --seat S": "Record checking on a quiet seat; closes when they next speak.",
+   "checkin --seat S": "Record checking on a quiet seat and open a checkin pair; resolve it only with an explicitly correlated inbound.",
    "turn --seat S [--wait N]": "Record that a seat got the floor.",
    "qc [--state FILE] [--record] [--json]": "Run the checks. Exit 1 if there are findings.",
    "pairs [--json]": "List outcome pairs still open.",

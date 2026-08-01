@@ -217,12 +217,13 @@ their own dice" stays an answerable question.
 
 **Resolution is one typed transition, never a global sweep.** One inbound or
 roll result may close at most one open pair. A supplied correlation ID must name
-an open obligation of the expected kind and seat. Without one, exactly one
-compatible pair must be open; multiple matches are quarantined as ambiguous and
-none are closed. Empty messages acknowledge nothing. Duplicate IDs, orphan or
-reordered closes, kind changes, invalid kind-specific outcomes, second closes,
-and closes timestamped before their opens are explicit lifecycle failures, not
-state that gets folded into a plausible answer.
+an open obligation of the expected kind and seat. Without one, no compatible
+pair is closed, even if only one is open; the event is durably receipted and
+quarantined as `missing_correlation` with the compatible pair IDs retained for
+diagnosis. Empty messages acknowledge nothing.
+Duplicate IDs, orphan or reordered closes, kind changes, invalid kind-specific
+outcomes, second closes, and closes timestamped before their opens are explicit
+lifecycle failures, not state that gets folded into a plausible answer.
 
 Generated pair IDs use a timestamp for diagnostics plus a UUID4; the ledger
 still atomically refuses duplicate opens. This removes the former short random
@@ -233,11 +234,13 @@ may create one `roll_result_advisory` attention item for correlation, but they
 never create an `act` or close a roll. Damage, healing, hit points, movement,
 and other non-roll quantities are ignored by this detector. A configured relay
 may resolve a roll only with verified bot role, exact sheet-ID or exact
-normalized alias attribution, a numeric total, and any exposed natural die in
-range. Missing or impossible relay evidence is quarantined with no `act` and no
-resolution. A successful roll `out.close` is self-contained: its obligation ID,
-source key, total, exposed die/natural, confidence, and provenance travel with
-the transition.
+normalized alias attribution, a numeric total, any exposed natural die in
+range, and explicit correlation to the open roll pair. Missing or impossible
+relay evidence is quarantined with no `act` and no resolution; valid but
+uncorrelated results retain the observed `act` and are quarantined without
+closing an obligation. A successful roll `out.close` is self-contained: its
+obligation ID, source key, total, exposed die/natural, confidence, and provenance
+travel with the transition.
 
 Source-native principal IDs and evidence are retained, but alias fallback is
 still local and non-authoritative. Host-owned identity and the suite-wide

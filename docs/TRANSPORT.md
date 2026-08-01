@@ -180,12 +180,14 @@ become a second beat or player line.
 ## 9. One result, one obligation
 
 An inbound/result resolves at most one compatible pair. An explicit `pair_id`
-must refer to an open obligation of the expected kind and seat. Without one,
-there must be exactly one compatible pair; multiple candidates are quarantined
-as `ambiguous_correlation`, and none is closed. Blank content acknowledges
-nothing. This is intentionally narrower than guessing based on timing: temporal
-proximity is useful evidence for a human, not enough authority for an automated
-ledger transition.
+must refer to an open obligation of the expected kind and seat. Without one, no
+compatible pair is closed, even when only one is open; the inbound/result is
+durably receipted and quarantined as `missing_correlation`, with candidate pair
+IDs retained for diagnosis. Blank content acknowledges nothing. This is
+intentionally narrower than guessing based on timing or uniqueness: both are
+useful evidence for a human, not enough authority for an automated ledger
+transition. It remains the interim contract until PORT-002/PORT-003 supply
+host-owned correlation and identity.
 
 [gateway]: https://docs.discord.com/developers/events/gateway
 [application-flags]: https://docs.discord.com/developers/resources/application#application-object-application-flags

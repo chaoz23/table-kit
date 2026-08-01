@@ -193,11 +193,12 @@ def close_one(ledger, kinds, seat, outcomes, correlation_id=None, detail=None,
               ts=None, source=None, source_id=None, evidence=None):
     """Close exactly one compatible obligation, or fail closed.
 
-    ``correlation_id`` selects one explicit ID.  Without it, resolution is
-    allowed only when exactly one open obligation matches ``seat`` and one of
-    ``kinds``.  Zero matches is a no-op; multiple matches are a typed
-    ambiguity.  This is the safe local bridge until PORT-002 defines canonical
-    correlation and PORT-003 supplies host-owned identity.
+    ``correlation_id`` must select one explicit ID whenever a compatible open
+    obligation exists.  An uncorrelated event may be observed when there is no
+    compatible obligation, but it never gains authority from timing or from
+    being the only candidate.  This is the fail-closed local bridge until
+    PORT-002 defines canonical correlation and PORT-003 supplies host-owned
+    identity.
     """
     allowed_kinds = tuple(kinds)
     if not allowed_kinds or any(kind not in PAIR_KINDS for kind in allowed_kinds):
@@ -238,13 +239,11 @@ def close_one(ledger, kinds, seat, outcomes, correlation_id=None, detail=None,
                       and p.get("seat") == seat]
         if not candidates:
             return None
-        if len(candidates) > 1:
-            raise PairError(
-                "ambiguous_correlation",
-                f"{len(candidates)} compatible obligations are open for {seat!r}; "
-                "supply an explicit pair id",
-                pair_ids=[p["id"] for p in candidates])
-        candidate = candidates[0]
+        raise PairError(
+            "missing_correlation",
+            f"{len(candidates)} compatible obligation(s) are open for {seat!r}; "
+            "supply an explicit pair id",
+            pair_ids=sorted(p["id"] for p in candidates))
     return close_pair(
         ledger, candidate["pair"], candidate["id"],
         outcomes[candidate["pair"]], detail=detail, ts=ts,

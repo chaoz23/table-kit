@@ -59,12 +59,18 @@ class Harness(unittest.TestCase):
 
 
 class TestOneResolution(Harness):
-    def test_unique_compatible_pair_closes(self):
+    def test_unique_compatible_pair_requires_explicit_correlation(self):
         pairs.open_pair(self.ledger, "cue", "cue-1", seat="rowan")
         ingest.ingest_message(self.cfg, self.ledger, human("m-1"))
-        self.assertEqual(pairs.open_now(self.ledger), [])
-        [closed] = self.ledger.read(etype="out.close")
-        self.assertEqual((closed["id"], closed["outcome"]), ("cue-1", "taken"))
+        self.assertEqual([p["id"] for p in pairs.open_now(self.ledger)],
+                         ["cue-1"])
+        self.assertEqual(self.ledger.read(etype="out.close"), [])
+        [receipt] = self.ledger.read(etype="qa.inbound")
+        [route] = self.ledger.read(etype="qa.route")
+        self.assertEqual(receipt["source_id"], "m-1")
+        self.assertEqual((route["status"], route["reason"]),
+                         ("quarantined", "missing_correlation"))
+        self.assertEqual(route["pair_ids"], ["cue-1"])
 
     def test_two_compatible_pairs_fail_closed(self):
         pairs.open_pair(self.ledger, "cue", "cue-1", seat="rowan")
@@ -73,7 +79,7 @@ class TestOneResolution(Harness):
         self.assertEqual({p["id"] for p in pairs.open_now(self.ledger)},
                          {"cue-1", "check-1"})
         self.assertEqual(self.ledger.read(etype="qa.route")[-1]["reason"],
-                         "ambiguous_correlation")
+                         "missing_correlation")
 
     def test_explicit_pair_closes_only_that_pair(self):
         pairs.open_pair(self.ledger, "cue", "cue-1", seat="rowan")
@@ -84,6 +90,15 @@ class TestOneResolution(Harness):
         [closed] = self.ledger.read(etype="out.close")
         self.assertEqual((closed["id"], closed["pair"], closed["outcome"]),
                          ("check-1", "checkin", "returned"))
+
+    def test_native_correlation_id_closes_the_named_pair(self):
+        pairs.open_pair(self.ledger, "cue", "cue-1", seat="rowan")
+        ingest.ingest_message(
+            self.cfg, self.ledger,
+            human("m-native-correlation", correlation_id="cue-1"))
+        self.assertEqual(pairs.open_now(self.ledger), [])
+        [closed] = self.ledger.read(etype="out.close")
+        self.assertEqual((closed["id"], closed["outcome"]), ("cue-1", "taken"))
 
     def test_explicit_cross_seat_pair_is_refused(self):
         pairs.open_pair(self.ledger, "cue", "cue-1", seat="vesh")
@@ -117,7 +132,7 @@ class TestOneResolution(Harness):
         self.assertEqual(self.ledger.read(etype="qa.route")[-1]["reason"],
                          "blank_content")
 
-    def test_manual_cli_refuses_ambiguity_and_accepts_explicit_pair(self):
+    def test_manual_cli_refuses_missing_correlation_and_accepts_explicit_pair(self):
         pairs.open_pair(self.ledger, "cue", "cue-1", seat="rowan")
         pairs.open_pair(self.ledger, "checkin", "check-1", seat="rowan")
         common = ["--ledger", self.ledger.path]
@@ -125,8 +140,9 @@ class TestOneResolution(Harness):
                            + common)
         self.assertEqual(refused, 2)
         self.assertEqual(len(pairs.open_now(self.ledger)), 2)
-        self.assertEqual(self.ledger.read(etype="qa.route")[-1]["reason"],
-                         "ambiguous_correlation")
+        refused_route = self.ledger.read(etype="qa.route")[-1]
+        self.assertEqual(refused_route["reason"], "missing_correlation")
+        self.assertEqual(refused_route["pair_ids"], ["check-1", "cue-1"])
         accepted = cli.main(["inbound", "--seat", "rowan", "--text", "yes",
                              "--pair", "cue-1"] + common)
         self.assertEqual(accepted, 0)
@@ -138,7 +154,7 @@ class TestIdentityBoundaries(Harness):
     def test_exact_normalized_alias_matches(self):
         pairs.open_pair(self.ledger, "cue", "cue-1", seat="rowan")
         ingest.ingest_message(self.cfg, self.ledger,
-                              human("id-1", author="  rO  "))
+                              human("id-1", author="  rO  ", pair_id="cue-1"))
         self.assertEqual(pairs.open_now(self.ledger), [])
 
     def test_substring_is_not_an_identity(self):
@@ -192,7 +208,7 @@ class TestIdentityBoundaries(Harness):
         ingest.ingest_message(
             self.cfg, self.ledger,
             {"id": "agent-1", "author": "Vesh", "author_id": "principal-42",
-             "is_bot": True, "content": "I answer"})
+             "is_bot": True, "content": "I answer", "pair_id": "cue-agent"})
         [receipt] = self.ledger.read(etype="qa.inbound")
         self.assertEqual((receipt["seat"], receipt["principal_id"],
                           receipt["source_role"]),
@@ -216,9 +232,13 @@ class TestDurableReceipts(Harness):
 
     def test_same_native_id_cannot_be_replayed_with_new_meaning(self):
         pairs.open_pair(self.ledger, "cue", "cue-1", seat="rowan")
-        ingest.ingest_message(self.cfg, self.ledger, human("mutated", "first"))
+        ingest.ingest_message(
+            self.cfg, self.ledger,
+            human("mutated", "first", pair_id="cue-1"))
         pairs.open_pair(self.ledger, "cue", "cue-2", seat="rowan")
-        ingest.ingest_message(self.cfg, self.ledger, human("mutated", "changed"))
+        ingest.ingest_message(
+            self.cfg, self.ledger,
+            human("mutated", "changed", pair_id="cue-2"))
         self.assertEqual(len(self.ledger.read(etype="qa.inbound")), 1)
         self.assertEqual([p["id"] for p in pairs.open_now(self.ledger)], ["cue-2"])
         self.assertEqual(self.ledger.read(etype="qa.route")[-1]["reason"],
@@ -254,7 +274,7 @@ class TestDurableReceipts(Harness):
     def test_successful_relay_replay_does_not_repeat_effects(self):
         cfg = self.relay_config()
         pairs.open_pair(self.ledger, "roll", "roll-1", seat="rowan")
-        msg = relay("relay-good")
+        msg = relay("relay-good", pair_id="roll-1")
         for _ in range(5):
             ingest.ingest_message(cfg, self.ledger, msg)
         self.assertEqual(len(self.ledger.read(etype="qa.inbound")), 1)
@@ -266,7 +286,7 @@ class TestDurableReceipts(Harness):
 
     def test_concurrent_replay_has_one_receipt_and_one_resolution(self):
         pairs.open_pair(self.ledger, "cue", "cue-1", seat="rowan")
-        msg = human("concurrent-1")
+        msg = human("concurrent-1", pair_id="cue-1")
         errors = []
 
         def worker():
@@ -288,7 +308,7 @@ class TestDurableReceipts(Harness):
 
     def test_unknown_principal_can_be_repaired_by_new_exact_config(self):
         pairs.open_pair(self.ledger, "cue", "cue-1", seat="rowan")
-        msg = human("repair-user", author="Guest")
+        msg = human("repair-user", author="Guest", pair_id="cue-1")
         ingest.ingest_message(self.cfg, self.ledger, msg)
         repaired = TableConfig({**BASE, "data_dir": self.directory,
                                 "seats": [
@@ -310,7 +330,7 @@ class TestDurableReceipts(Harness):
     def test_relay_attribution_can_be_repaired_by_exact_alias(self):
         cfg = self.relay_config()
         pairs.open_pair(self.ledger, "roll", "roll-1", seat="rowan")
-        msg = relay("repair-relay", actor="Ash")
+        msg = relay("repair-relay", actor="Ash", pair_id="roll-1")
         ingest.ingest_message(cfg, self.ledger, msg)
         ingest.ingest_message(self.relay_config(["Ash"]), self.ledger, msg)
         self.assertEqual(len(self.ledger.read(etype="qa.inbound")), 1)
@@ -339,7 +359,21 @@ class TestRelayValidation(Harness):
         self.assertEqual({p["id"] for p in pairs.open_now(self.ledger, "roll")},
                          {"roll-1", "roll-2"})
         self.assertEqual(self.ledger.read(etype="qa.route")[-1]["reason"],
-                         "ambiguous_correlation")
+                         "missing_correlation")
+
+    def test_uncorrelated_relay_observation_does_not_close_unique_roll(self):
+        cfg = self.relay_config()
+        pairs.open_pair(self.ledger, "roll", "roll-1", seat="rowan")
+        ingest.ingest_message(cfg, self.ledger, relay("uncorrelated-roll"))
+        self.assertEqual([p["id"] for p in pairs.open_now(self.ledger, "roll")],
+                         ["roll-1"])
+        self.assertEqual(self.ledger.read(etype="out.close"), [])
+        [act] = self.ledger.read(etype="act")
+        [route] = self.ledger.read(etype="qa.route")
+        self.assertEqual(act["source_id"], "uncorrelated-roll")
+        self.assertEqual((route["status"], route["reason"]),
+                         ("quarantined", "missing_correlation"))
+        self.assertEqual(route["pair_ids"], ["roll-1"])
 
     def test_explicit_relay_correlation_closes_only_one_roll(self):
         cfg = self.relay_config()

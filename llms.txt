@@ -55,12 +55,14 @@ by tests, not a preference.
 - Player prose is not stored unless you ask for it with --keep-text.
 - A source-native message ID is receipted before routing and deduplicates every
   replay, including quarantine. Missing IDs cannot resolve state.
-- One inbound/result closes at most one typed obligation: explicit correlation
-  or exactly one compatible open pair. Blank and ambiguous input closes none.
+- One inbound/result closes at most one typed obligation, and only with an
+  explicit correlation to that compatible open pair. Missing correlation,
+  blank input, and invalid correlation close none and remain visible.
 - Identity fallback is exact after Unicode/case/whitespace normalization;
   unknown remains unknown and substring matching is forbidden.
-- Free-form roll prose is advisory only. Only a verified, exactly attributed,
-  structurally valid relay result may auto-resolve a roll.
+- Free-form roll prose is advisory only. A verified, exactly attributed,
+  structurally valid relay result may resolve a roll only when it also carries
+  an explicit pair correlation.
 - Pair IDs are collision-resistant; duplicate opens, orphan/second closes,
   kind changes, and invalid kind-specific outcomes are refused.
 

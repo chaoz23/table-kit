@@ -320,7 +320,8 @@ def cmd_inbound(args):
             correlation_id=correlation_id, detail="manual non-empty inbound")
     except pairs.PairError as error:
         led.append("qa.route", source="manual", status="quarantined",
-                   reason=error.code, seat=sid, detail=str(error))
+                   reason=error.code, seat=sid, detail=str(error),
+                   **error.details)
         raise
     led.append("qa.route", source="manual",
                status="routed" if close else "observed",
@@ -390,7 +391,8 @@ def cmd_checkin(args):
     sid = _seat_id(cfg, seat)
     pid = pairs.new_id("checkin")
     pairs.open_pair(led, "checkin", pid, seat=sid, detail="checked on a quiet seat")
-    print(f"checked on {sid} — pair {pid} closes when they next speak")
+    print(f"checked on {sid} — pair {pid} open; resolve it with an inbound "
+          f"carrying --pair {pid}")
     return 0
 
 

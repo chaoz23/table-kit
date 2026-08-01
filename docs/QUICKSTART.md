@@ -47,17 +47,20 @@ Without a chat platform, drive it by hand:
 
 ```bash
 tablekit beat "The causeway is coming up out of the water. Rowan, you are first onto the wet stone." --cue rowan
-tablekit inbound --seat rowan --text "I go slow, watching the water line."
+# Copy the cue pair ID printed by beat:
+tablekit inbound --seat rowan --pair cue-1785440000000-7a04fb81b49c49e68b72f8d21ba117da --text "I go slow, watching the water line."
 tablekit roll --seat rowan "Perception to place the sound"
 tablekit consumed roll-1785440000000-4f3c2a107af149cc91f62331dbf67adc
 tablekit qc                 # between beats — one line, or a defect
 ```
 
-`inbound` closes at most one cue/check-in obligation. If more than one is open
-for the seat it refuses the ambiguity; rerun with `--pair ID` to correlate the
-specific one. Blank text acknowledges nothing. A typed roll result remains
-advisory—use the returned roll ID with `consumed` after correlating and
-confirming it, or rely on a verified structured roll relay.
+`inbound` closes at most one cue/check-in obligation and requires `--pair ID`
+to correlate it, even when that is the seat's only open obligation. Without a
+pair ID, the inbound is recorded and the unresolved match remains visible as
+`missing_correlation`. Blank text acknowledges nothing. A typed roll result
+remains advisory—use the returned roll ID with `consumed` after correlating and
+confirming it. A verified structured roll relay can resolve it only when the
+host supplies that explicit pair correlation.
 
 When someone says something that tells you how the evening is landing, record
 it with their own words attached:
@@ -90,8 +93,8 @@ session capture; see [TRANSPORT.md](TRANSPORT.md#3-resume-is-not-a-durable-check
 
 The listener must supply stable message IDs. Every ID is durably receipted
 before routing, including quarantined messages; missing IDs cannot resolve
-state. Unknown identities and ambiguous pair matches stay visible in
-`qa.route` instead of being guessed.
+state. Unknown identities and missing or invalid pair correlations stay visible
+in `qa.route` instead of being guessed.
 
 Then post through the helper so mentions are guaranteed and beats are recorded:
 

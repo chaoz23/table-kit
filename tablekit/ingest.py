@@ -15,7 +15,7 @@ What ingestion does per message:
 
   * records `qa.inbound` — who spoke and how much, never the prose itself
   * resolves at most one compatible outcome pair, and only when correlation
-    is explicit or unique
+    is explicit
 
 It deliberately does **not** parse player text for commands, tokens or
 keywords. Whatever a player types is dialogue, not syntax.
@@ -589,7 +589,7 @@ def ingest_message(cfg, ledger, msg, keep_text=False):
             if recovered is not None:
                 return recovered
             return finish("quarantined", error.code, repairable=False,
-                          detail=str(error))
+                          detail=str(error), **error.details)
         if close is None:
             recovered = recover_resolution()
             if recovered is not None:
@@ -617,7 +617,7 @@ def ingest_message(cfg, ledger, msg, keep_text=False):
         if recovered is not None:
             return recovered
         return finish("quarantined", error.code, repairable=False,
-                      detail=str(error))
+                      detail=str(error), **error.details)
     if close is not None:
         written.append(close)
         return finish("routed", "obligation_resolved", pair_id=close["id"])

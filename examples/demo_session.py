@@ -42,11 +42,13 @@ def beat(led, t, text, cue=None, chunks=1):
     led.append("qa.post", ts=t, ok=True, chars=len(text), chunks=chunks,
                latency_ms=90 + (len(text) % 60))
     if cue:
-        pairs.open_pair(led, "cue", f"cue-{int(t)}", seat=cue, detail=text[:80],
-                        ts=t)
+        pid = f"cue-{int(t)}"
+        pairs.open_pair(led, "cue", pid, seat=cue, detail=text[:80], ts=t)
+        return pid
+    return None
 
 
-def says(led, t, seat, text, signal=None):
+def says(led, t, seat, text, signal=None, correlation_id=None):
     """A seat speaks. `signal` is what the GM understood from it — recorded
     with their actual words attached, never parsed out of a token."""
     led.append("qa.inbound", ts=t, seat=seat, chars=len(text),
@@ -54,6 +56,7 @@ def says(led, t, seat, text, signal=None):
     if signal:
         uxr.record_signal(led, seat, signal, text, source="dm", ts=t)
     pairs.close_one(led, ("cue",), seat, {"cue": "taken"},
+                    correlation_id=correlation_id,
                     detail="demo inbound", ts=t)
 
 
@@ -63,17 +66,18 @@ def main():
     led = Ledger(path)
     t = time.time() - 4200  # a seventy-minute session that ended just now
 
-    beat(led, t, "The causeway stones are coming up out of the water one at a "
-                 "time, and the bell above the chapel has not rung since you "
-                 "got here. Rowan, you are first onto the wet stone.",
-         cue="rowan")
+    cue_id = beat(led, t, "The causeway stones are coming up out of the water one at a "
+                          "time, and the bell above the chapel has not rung since you "
+                          "got here. Rowan, you are first onto the wet stone.",
+                  cue="rowan")
     says(led, t + 40, "rowan", "I go slow, watching the water line. Oh this is good.",
-         signal="resonance")
+         signal="resonance", correlation_id=cue_id)
 
     t += 300
-    beat(led, t, "Halfway across, something under the surface keeps pace with "
-                 "you. Brae?", cue="brae")
-    says(led, t + 55, "brae", "I hold up a hand and stop the group.")
+    cue_id = beat(led, t, "Halfway across, something under the surface keeps pace with "
+                          "you. Brae?", cue="brae")
+    says(led, t + 55, "brae", "I hold up a hand and stop the group.",
+         correlation_id=cue_id)
 
     t += 240
     # A roll called and never consumed — the ledger defect this catches.
@@ -88,10 +92,10 @@ def main():
                  "you do?", cue="vesh")
 
     t += 420
-    beat(led, t, "The stones behind you are already under. Rowan, you can see "
-                 "the chapel door standing open.", cue="rowan")
+    cue_id = beat(led, t, "The stones behind you are already under. Rowan, you can see "
+                          "the chapel door standing open.", cue="rowan")
     says(led, t + 60, "rowan", "I run for it — finally, this is what the lantern is for.",
-         signal="spotlight")
+         signal="spotlight", correlation_id=cue_id)
 
     t += 380
     beat(led, t, "Inside, thirty-one cuts in the doorframe, and the rope is "

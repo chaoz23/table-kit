@@ -61,18 +61,21 @@ pointed straight at it with no export step.
 Inbound handling is deliberately fail-closed. A source-native message ID is
 committed before routing and deduplicates replays, including messages that are
 rejected or quarantined. An inbound can resolve **at most one** typed obligation:
-an explicit `pair_id` wins, otherwise exactly one compatible open pair must
-exist for that seat. Blank messages acknowledge nothing; ambiguous, unknown,
-cross-seat, and cross-kind correlations remain open and are surfaced in
-`qa.route`.
+an explicit `pair_id` must name the compatible open pair. Being the only open
+candidate does not grant an uncorrelated event authority to close it. Blank
+messages acknowledge nothing; missing, unknown, cross-seat, and cross-kind
+correlations remain open and are surfaced in `qa.route`. This is the
+fail-closed bridge until PORT-002/PORT-003 provide host correlation and
+identity.
 
 Identity fallback is exact after Unicode/case/whitespace normalization, never a
 substring guess (`Will` does not capture `William`). Unknown speakers remain
 `unknown`. Relayed rolls additionally require a configured relay name, an
 actual bot flag, exact sheet ID or exact configured alias, a numeric result,
-and a plausible declared natural-die range. Ordinary prose such as `14` or
-`nat 20` is **advisory only**; damage, healing, hit points, movement, and other
-non-roll quantities do not auto-resolve a roll.
+a plausible declared natural-die range, and explicit pair correlation before
+resolution. Ordinary prose such as `14` or `nat 20` is **advisory only**;
+damage, healing, hit points, movement, and other non-roll quantities do not
+auto-resolve a roll.
 
 ### The `uxr` lane
 

@@ -141,9 +141,11 @@ class TestIngest(Base):
 
     def test_inbound_closes_the_matching_cue(self):
         post.post(self.cfg, self.led, "Rowan?", cue="rowan", send_fn=self.send)
+        pid = pairs.open_now(self.led, "cue")[0]["id"]
         ingest.ingest_message(self.cfg, self.led,
                               {"id": "cue-answer", "author": "Rowan",
-                               "content": "I answer", "is_bot": False})
+                               "content": "I answer", "is_bot": False,
+                               "pair_id": pid})
         self.assertEqual(pairs.open_now(self.led, "cue"), [])
 
     def test_inbound_from_another_seat_leaves_the_cue_open(self):
@@ -177,7 +179,9 @@ class TestIngest(Base):
 
     def test_idempotent_ingest_does_not_reclose_a_pair(self):
         post.post(self.cfg, self.led, "Rowan?", cue="rowan", send_fn=self.send)
-        msg = {"id": "m-9", "author": "Rowan", "content": "yes"}
+        pid = pairs.open_now(self.led, "cue")[0]["id"]
+        msg = {"id": "m-9", "author": "Rowan", "content": "yes",
+               "pair_id": pid}
         ingest.ingest_message(self.cfg, self.led, msg)
         ingest.ingest_message(self.cfg, self.led, msg)
         closes = [r for r in self.led.read(etype="out.close")]
@@ -302,7 +306,9 @@ class TestRealBeyond20Payload(unittest.TestCase):
 
     def test_the_roll_lands_in_the_play_ledger(self):
         pairs.open_pair(self.led, "roll", "r1", seat="william", detail="initiative")
-        ingest.ingest_message(self.cfg, self.led, REAL_BEYOND20)
+        msg = json.loads(json.dumps(REAL_BEYOND20))
+        msg["pair_id"] = "r1"
+        ingest.ingest_message(self.cfg, self.led, msg)
         [act] = self.led.read(etype="act")
         self.assertEqual(act["roll_total"], 20)
         self.assertEqual(act["actor"], "William")
@@ -340,7 +346,9 @@ class TestRollRelay(Base):
 
     def test_relayed_roll_closes_the_open_roll_pair(self):
         pairs.open_pair(self.led, "roll", "r1", seat="rowan", detail="Perception")
-        ingest.ingest_message(self.cfg, self.led, self._roll("Rowan"))
+        msg = self._roll("Rowan")
+        msg["pair_id"] = "r1"
+        ingest.ingest_message(self.cfg, self.led, msg)
         self.assertEqual(pairs.open_now(self.led, "roll"), [])
 
     def test_unattributable_relay_is_flagged_not_guessed(self):
@@ -354,8 +362,7 @@ class TestRollRelay(Base):
                          ("quarantined", "relay_unattributed"))
 
     def test_relay_text_is_kept_even_without_keep_text(self):
-        """Dice arithmetic is not the player's prose, and it is the evidence
-        that closed the pair."""
+        """Dice arithmetic is source evidence, not the player's prose."""
         ingest.ingest_message(self.cfg, self.led, self._roll("Rowan"))
         self.assertIn("Perception", self.led.read(etype="qa.inbound")[0]["text"])
 
