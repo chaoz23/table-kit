@@ -68,6 +68,7 @@ SCHEMA = {
     "qa.post":       ("ok", "chars", "chunks"),
     "qa.post_failed": ("error",),
     "qa.inbound":    ("seat", "chars"),
+    "qa.route":      ("source", "status", "reason"),
     "qa.listener":   ("state",),
     "qa.command":    ("cmd", "ok"),
     # Parked for below-the-table investigation. Never interrupts play, never
@@ -103,8 +104,14 @@ PAIR_KINDS = {
     "endmarker": "a session end marker; did the next opening match it?",
 }
 
-PAIR_OUTCOMES = ("taken", "ignored", "expired", "superseded", "consumed",
-                 "unconsumed", "returned", "absent", "matched", "diverged")
+PAIR_OUTCOMES = {
+    "cue":       ("taken", "ignored", "expired", "superseded"),
+    "roll":      ("consumed", "unconsumed", "superseded"),
+    "checkin":   ("returned", "absent", "superseded"),
+    "endmarker": ("matched", "diverged", "superseded"),
+}
+
+ROUTE_STATUSES = ("routed", "observed", "advisory", "ignored", "quarantined")
 
 # A corrupt or hostile producer must not make every report allocate an
 # unbounded string. Oversized rows are diagnosed exactly like malformed rows.
@@ -171,6 +178,7 @@ FIELD_VALIDATORS = {
         "chunks": lambda v, f, t: _integer(v, f, t, 1)},
     "qa.post_failed": {"error": _string},
     "qa.inbound": {"seat": _string, "chars": _integer},
+    "qa.route": {"source": _string, "status": _string, "reason": _string},
     "qa.listener": {"state": _string},
     "qa.command": {"cmd": _string, "ok": _boolean},
     "qa.delta": {"topic": _string, "detail": _string},
@@ -226,9 +234,18 @@ def validate(rec):
     if etype in ("out.open", "out.close") and rec["pair"] not in PAIR_KINDS:
         raise SchemaError(
             f"unknown pair kind {rec['pair']!r}; known: {', '.join(sorted(PAIR_KINDS))}")
-    if etype == "out.close" and rec["outcome"] not in PAIR_OUTCOMES:
+    if etype == "out.close" and rec["outcome"] not in PAIR_OUTCOMES[rec["pair"]]:
+        allowed = PAIR_OUTCOMES[rec["pair"]]
         raise SchemaError(
-            f"unknown outcome {rec['outcome']!r}; known: {', '.join(PAIR_OUTCOMES)}")
+            f"out.close: outcome {rec['outcome']!r} is invalid for "
+            f"{rec['pair']!r}; allowed: {', '.join(allowed)}")
+    if etype == "qa.route" and rec["status"] not in ROUTE_STATUSES:
+        raise SchemaError(
+            f"qa.route: unknown status {rec['status']!r}; known: "
+            f"{', '.join(ROUTE_STATUSES)}")
+    for field in ("source_id", "principal_id", "msg_id"):
+        if field in rec:
+            _string(rec[field], field, etype)
     return rec
 
 
@@ -285,7 +302,7 @@ class Ledger:
         if d:
             _makedirs_private(d)
         self._assert_regular_not_symlink()
-        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
         if hasattr(os, "O_CLOEXEC"):
             flags |= os.O_CLOEXEC
         if hasattr(os, "O_NOFOLLOW"):
@@ -302,6 +319,7 @@ class Ledger:
             if fcntl is not None:
                 fcntl.flock(fd, fcntl.LOCK_EX)
                 locked = True
+            self._ensure_line_boundary(fd)
             view = memoryview(payload)
             while view:
                 written = os.write(fd, view)
@@ -314,6 +332,111 @@ class Ledger:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
         return rec
+
+    def append_once(self, etype, unique, **fields):
+        """Atomically append unless a valid row already owns ``unique``.
+
+        Returns ``(record, created)``.  The check and append share the same
+        advisory file lock, which is the repo-local primitive used to commit a
+        source-native message receipt before any routing side effect.  It is a
+        bounded-feature correctness seam, not the native-ID index or host
+        transaction model deferred to PORT-002/003.
+        """
+        if not isinstance(unique, dict) or not unique:
+            raise SchemaError("append_once: unique must be a non-empty object")
+        if any(not isinstance(key, str) for key in unique):
+            raise SchemaError("append_once: unique keys must be strings")
+        _json_value(unique, "append_once.unique")
+        rec = make(etype, **fields)
+        for key, value in unique.items():
+            if rec.get(key) != value:
+                raise SchemaError(
+                    f"append_once: unique field {key!r} does not match the event")
+        try:
+            payload = (json.dumps(rec, ensure_ascii=False, allow_nan=False,
+                                  separators=(",", ":")) + "\n").encode()
+        except (TypeError, ValueError) as e:  # defensive; validate owns errors
+            raise SchemaError(f"event is not JSON serializable: {e}") from e
+        if len(payload) > MAX_LINE_BYTES:
+            raise SchemaError(
+                f"event exceeds the {MAX_LINE_BYTES}-byte ledger row limit")
+        d = os.path.dirname(self.path)
+        if d:
+            _makedirs_private(d)
+        self._assert_regular_not_symlink()
+        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(self.path, flags, 0o600)
+        except OSError as e:
+            raise SchemaError(f"cannot open ledger safely at {self.path}: {e}") from e
+        locked = False
+        try:
+            mode = os.fstat(fd).st_mode
+            if not stat.S_ISREG(mode):
+                raise SchemaError(f"ledger path is not a regular file: {self.path}")
+            if fcntl is not None:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                locked = True
+            self._ensure_line_boundary(fd)
+            existing = self._find_locked(fd, etype, unique)
+            if existing is not None:
+                return existing, False
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("ledger write made no progress")
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            if locked:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        return rec, True
+
+    @staticmethod
+    def _ensure_line_boundary(fd):
+        """Separate a crash-truncated final row from the next valid append."""
+        end = os.lseek(fd, 0, os.SEEK_END)
+        if end == 0:
+            return
+        os.lseek(fd, -1, os.SEEK_END)
+        if os.read(fd, 1) != b"\n":
+            # O_APPEND places this at EOF regardless of the read offset. The
+            # truncated row remains an auditable diagnostic; the next record
+            # no longer gets fused into it and lost.
+            os.write(fd, b"\n")
+            os.fsync(fd)
+
+    @staticmethod
+    def _find_locked(fd, etype, unique):
+        """Find a schema-valid unique owner while the caller holds the lock."""
+        os.lseek(fd, 0, os.SEEK_SET)
+        with os.fdopen(os.dup(fd), "rb") as reader:
+            while True:
+                raw = reader.readline(MAX_LINE_BYTES + 1)
+                if not raw:
+                    return None
+                if len(raw) > MAX_LINE_BYTES:
+                    if not raw.endswith(b"\n"):
+                        while raw and not raw.endswith(b"\n"):
+                            raw = reader.readline(MAX_LINE_BYTES + 1)
+                    continue
+                try:
+                    existing = json.loads(
+                        raw.decode("utf-8").strip(),
+                        parse_constant=_invalid_json_constant)
+                    validate(existing)
+                except (UnicodeDecodeError, ValueError, SchemaError):
+                    continue
+                if (existing.get("type") == etype
+                        and all(existing.get(key) == value
+                                for key, value in unique.items())):
+                    return existing
 
     # ---- reading ----------------------------------------------------
     def read(self, lane=None, etype=None):

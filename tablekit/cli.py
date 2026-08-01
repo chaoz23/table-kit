@@ -23,7 +23,8 @@ import time
 
 from . import detector, pairs, report, ux, uxr
 from .config import ConfigError, load as load_config
-from .events import SCHEMA, Ledger, PAIR_KINDS, SchemaError
+from .events import (SCHEMA, Ledger, PAIR_KINDS, PAIR_OUTCOMES,
+                     ROUTE_STATUSES, SchemaError)
 
 __version__ = "0.5.1"
 
@@ -33,7 +34,7 @@ USAGE = """tablekit — instrumentation for a live hybrid table
 
   during play
     tablekit beat "<text>" [--cue SEAT] [--chunks N] [--kind scene|combat|ooc]
-    tablekit inbound --seat S --text "<what they said>"
+    tablekit inbound --seat S --text "<what they said>" [--pair ID]
     tablekit roll --seat S "<what for>" [--dc N]   called for a roll
     tablekit consumed <pair-id> [--outcome consumed]
     tablekit checkin --seat S                  checked on a quiet seat
@@ -303,6 +304,7 @@ def cmd_beat(args):
 def cmd_inbound(args):
     seat = _flag(args, "--seat")
     text_flag = _flag(args, "--text")
+    correlation_id = _flag(args, "--pair")
     if not seat:
         print("inbound: --seat is required", file=sys.stderr)
         return 2
@@ -311,19 +313,23 @@ def cmd_inbound(args):
     _known_seat(cfg, seat)
     sid = _seat_id(cfg, seat)
     led.append("qa.inbound", seat=sid, chars=len(text), words=len(text.split()))
-    closed = []
-    for p in pairs.open_now(led, "cue"):
-        if p.get("seat") == sid:
-            pairs.close_pair(led, "cue", p["id"], "taken", opened_ts=p["opened_ts"])
-            closed.append(p["id"])
-    for p in pairs.open_now(led, "checkin"):
-        if p.get("seat") == sid:
-            pairs.close_pair(led, "checkin", p["id"], "returned",
-                             opened_ts=p["opened_ts"])
-            closed.append(p["id"])
+    try:
+        close = pairs.close_one(
+            led, ("cue", "checkin"), sid,
+            {"cue": "taken", "checkin": "returned"},
+            correlation_id=correlation_id, detail="manual non-empty inbound")
+    except pairs.PairError as error:
+        led.append("qa.route", source="manual", status="quarantined",
+                   reason=error.code, seat=sid, detail=str(error))
+        raise
+    led.append("qa.route", source="manual",
+               status="routed" if close else "observed",
+               reason="obligation_resolved" if close
+               else "no_compatible_obligation",
+               seat=sid, pair_id=close["id"] if close else None)
     bits = [f"inbound from {sid}"]
-    if closed:
-        bits.append("closed: " + ", ".join(closed))
+    if close:
+        bits.append("closed: " + close["id"])
     print(" | ".join(bits))
     return 0
 
@@ -536,6 +542,8 @@ def cmd_schema(args):
         "version": __version__,
         "event_types": {k: list(v) for k, v in SCHEMA.items()},
         "pair_kinds": PAIR_KINDS,
+        "pair_outcomes": {k: list(v) for k, v in PAIR_OUTCOMES.items()},
+        "route_statuses": list(ROUTE_STATUSES),
         "signals": {k: v["means"] for k, v in uxr.SIGNALS.items()},
         "signal_sources": list(uxr.SOURCES),
         "player_command_syntax": None,

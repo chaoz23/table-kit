@@ -276,6 +276,16 @@ def render(rep):
         add(_line("how rolls arrived", routes))
     add(_line("listener interruptions", t["listener_interruptions"]))
     add(_line("command failures", f"{t['command_failures']}/{t['commands']}"))
+    add(_line("routing quarantines", t.get("routing_quarantines", 0)))
+    if t.get("routing_quarantine_events", 0) != t.get("routing_quarantines", 0):
+        add(_line("quarantine events (history)",
+                  t.get("routing_quarantine_events", 0)))
+    if t.get("routing_quarantine_reasons"):
+        reasons = ", ".join(
+            f"{reason} {count}" for reason, count
+            in sorted(t["routing_quarantine_reasons"].items()))
+        add(_line("quarantine reasons", reasons))
+    add(_line("routing advisories", t.get("routing_advisories", 0)))
     if t["malformed_records"]:
         add(_line("MALFORMED records", t["malformed_records"]))
     add("")
@@ -305,7 +315,8 @@ def render(rep):
 def exit_code(rep):
     if not rep["enough_data"]:
         return 2
-    if rep["qc"]["defects"]:
+    if (rep["qc"]["defects"]
+            or rep.get("transport", {}).get("routing_quarantines", 0)):
         return 1
     return 0
 

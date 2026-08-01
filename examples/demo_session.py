@@ -53,10 +53,8 @@ def says(led, t, seat, text, signal=None):
                words=len(text.split()))
     if signal:
         uxr.record_signal(led, seat, signal, text, source="dm", ts=t)
-    for p in pairs.open_now(led, "cue"):
-        if p["seat"] == seat:
-            pairs.close_pair(led, "cue", p["id"], "taken", ts=t,
-                             opened_ts=p["opened_ts"])
+    pairs.close_one(led, ("cue",), seat, {"cue": "taken"},
+                    detail="demo inbound", ts=t)
 
 
 def main():

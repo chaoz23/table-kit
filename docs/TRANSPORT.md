@@ -110,13 +110,18 @@ Gateway replay and polling can both deliver a message more than once. Polling
 transports deliberately re-read a window, and a GM checking the channel twice
 between beats is the normal case, not an edge case.
 
-So `ingest_message` skips any message whose platform `id` it has already
-recorded. Without that, every re-read doubles a seat's line count, and the
-participation numbers the report is built on quietly become fiction — the worst
-kind of failure here, because the output still looks perfectly reasonable.
+So `ingest_message` commits a `qa.inbound` receipt keyed by transport kind and
+platform ID **before** any routing effect. The receipt deduplicates successful,
+rejected, and quarantined messages alike; acts, findings, and resolutions also
+carry the same source key so a replay can safely repair a crash window without
+duplicating effects. `qa.route` records whether that receipt was routed,
+observed, advisory, ignored, or quarantined and why. A receipt also retains a
+source fingerprint rather than the raw payload; the same native ID replayed
+with different evidence is quarantined instead of acquiring a second meaning.
 
-A transport that cannot supply stable ids gets at-least-once delivery rather
-than silent dropping. Over-counting you can see; under-counting you cannot.
+A transport that cannot supply a stable ID is recorded and visibly
+quarantined. It cannot resolve an obligation: at-least-once text with no
+identity is not safe evidence for a state transition.
 
 ## 7. Roll relays post as themselves
 
@@ -129,9 +134,13 @@ one synthetic seat, no roll pair ever closes, and a player who rolled all
 evening reads as silent in the participation numbers.
 
 So `transport.roll_relay_bots` lists the relays, the listener forwards embeds,
-and ingestion attributes a relayed roll to whichever seat's name appears in it.
-**An unattributable relay is recorded as a failure, never guessed at** — a roll
-credited to the wrong seat is worse than one credited to none.
+and ingestion requires all of the following before a relay can act: the
+configured display name, `is_bot: true`, a numeric total, and attribution by an
+exact source-native sheet ID or an exact normalized configured alias in a
+structured embed field. Display names are not authority, and names are never
+searched as substrings (`Will` does not capture `William`). **An unattributable,
+empty, spoofed, or naturally impossible relay is quarantined, never guessed
+at**, and produces neither an `act` nor a pair resolution.
 
 This is also why the seat panel we scoped is unnecessary for D&D Beyond
 tables: Beyond20 already provides the click-a-skill affordance, so the player
@@ -139,28 +148,44 @@ never types dice syntax, which is the whole point of rule 4.
 
 **But never assume the relay is there.** The same table will not have it every
 night — somebody joins from a phone, an extension is not installed, a browser
-is signed out. So a roll arriving as ordinary text is a supported case, not a
-fallback: while a roll is outstanding for a seat, `detect_typed_roll` reads
-"14", "nat 20", "18 + 3 = 21" and consumes it.
+is signed out. Ordinary text such as "14", "nat 20", or "18 + 3 = 21" is
+therefore detected, but it is **advisory only**. It may create one
+`roll_result_advisory` attention item asking the operator to correlate and
+confirm; it never creates an `act` or consumes a roll. Damage, healing, hit
+points, movement, and other non-roll quantities are excluded. A wrong total
+silently consumed corrupts the ledger and nobody notices until the arithmetic
+stops making sense.
 
-The gate is deliberately conservative, and when it is unsure it **asks**:
-an ambiguous number produces a `roll_needs_confirming` attention item naming
-what it thinks it saw, and the pair stays open. A wrong total silently consumed
-corrupts the ledger and nobody notices until the arithmetic stops making sense.
-
-The report shows `how rolls arrived` (relay / typed / dm), so which pattern
-actually held on a given night is a recorded fact rather than an assumption.
+The report shows observed relay routes, routing advisories, and unresolved
+quarantine counts/reasons; repaired quarantine events remain a separate history
+count. Which path actually held on a given night is therefore a recorded fact
+rather than an assumption.
 
 ## 8. Seat sync
 
-The kit resolves a chat display name to a seat id through `aliases`. Keep that
-list generous: people rename themselves mid-campaign, and an unresolved speaker
-silently becomes their own seat in the record, which quietly halves the
-apparent participation of the real one.
+The repo-local fallback resolves a chat display name only by exact ID, display,
+or configured alias after Unicode compatibility normalization, case folding,
+and whitespace folding. Duplicate normalized identities are refused at config
+load. Keep aliases current, but do not make them fuzzy: an unresolved speaker
+is retained as `unknown` and quarantined, never invented as a new seat.
 
-The GM's own posts arrive back through the listener. They are dropped on
-ingest — recording them again would double every beat and halve every apparent
-player share.
+The source-native principal ID and role evidence are preserved on every
+receipt. They are not yet an authoritative host-owned identity mapping; that
+suite-wide contract belongs to `PORT-002`/`PORT-003`.
+
+The GM's own posts arrive back through the listener. They receive the same
+durable, deduplicated receipt and an `ignored: gm_echo` disposition, but do not
+become a second beat or player line.
+
+## 9. One result, one obligation
+
+An inbound/result resolves at most one compatible pair. An explicit `pair_id`
+must refer to an open obligation of the expected kind and seat. Without one,
+there must be exactly one compatible pair; multiple candidates are quarantined
+as `ambiguous_correlation`, and none is closed. Blank content acknowledges
+nothing. This is intentionally narrower than guessing based on timing: temporal
+proximity is useful evidence for a human, not enough authority for an automated
+ledger transition.
 
 [gateway]: https://docs.discord.com/developers/events/gateway
 [application-flags]: https://docs.discord.com/developers/resources/application#application-object-application-flags

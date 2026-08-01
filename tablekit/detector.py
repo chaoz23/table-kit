@@ -198,7 +198,7 @@ def record(ledger, findings):
     Always emits `qc.run` first. That event is the ONLY evidence that the
     checks were actually run, and it exists because the first version of this
     inferred "someone checked" from the presence of any `qc.finding` — which
-    ingest also emits for `roll_needs_confirming`. A session where nobody ran
+    ingest also emits for `roll_result_advisory`. A session where nobody ran
     qc therefore looked checked, and the report went back to claiming clean.
     Deriving "was this examined?" from a side effect of something else is the
     same false-negative one level down.

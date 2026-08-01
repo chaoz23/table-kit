@@ -134,20 +134,23 @@ class TestIngest(Base):
 
     def test_gm_echo_is_not_double_counted(self):
         evs = ingest.ingest_message(self.cfg, self.led,
-                                    {"author": "the gm bot", "content": "hi"})
-        self.assertEqual(evs, [])
-        self.assertEqual(self.led.read(etype="qa.inbound"), [])
+                                    {"id": "gm-1", "author": "the gm bot",
+                                     "content": "hi", "is_bot": True})
+        self.assertEqual([e["type"] for e in evs], ["qa.inbound", "qa.route"])
+        self.assertEqual(self.led.read(etype="qa.route")[0]["reason"], "gm_echo")
 
     def test_inbound_closes_the_matching_cue(self):
         post.post(self.cfg, self.led, "Rowan?", cue="rowan", send_fn=self.send)
         ingest.ingest_message(self.cfg, self.led,
-                              {"author": "Rowan", "content": "I answer"})
+                              {"id": "cue-answer", "author": "Rowan",
+                               "content": "I answer", "is_bot": False})
         self.assertEqual(pairs.open_now(self.led, "cue"), [])
 
     def test_inbound_from_another_seat_leaves_the_cue_open(self):
         post.post(self.cfg, self.led, "Rowan?", cue="rowan", send_fn=self.send)
         ingest.ingest_message(self.cfg, self.led,
-                              {"author": "Vesh", "content": "I wait"})
+                              {"id": "other-answer", "author": "Vesh",
+                               "content": "I wait", "is_bot": True})
         self.assertEqual(len(pairs.open_now(self.led, "cue")), 1)
 
     def test_ingest_is_idempotent_when_the_message_has_an_id(self):
@@ -166,7 +169,7 @@ class TestIngest(Base):
         self.assertEqual(len(self.led.read(etype="qa.inbound")), 3)
 
     def test_messages_without_ids_are_not_deduplicated(self):
-        """A transport that cannot supply ids gets at-least-once, not silence."""
+        """No-ID traffic remains visible but cannot resolve table state."""
         for _ in range(2):
             ingest.ingest_message(self.cfg, self.led,
                                   {"author": "Rowan", "content": "hi"})
@@ -180,17 +183,22 @@ class TestIngest(Base):
         closes = [r for r in self.led.read(etype="out.close")]
         self.assertEqual(len(closes), 1)
 
-    def test_unknown_speaker_is_kept_under_their_own_name(self):
+    def test_unknown_speaker_stays_unknown_and_is_quarantined(self):
         ingest.ingest_message(self.cfg, self.led,
-                              {"author": "Guest", "content": "hi"})
-        self.assertEqual(self.led.read(etype="qa.inbound")[0]["seat"], "Guest")
+                              {"id": "guest-1", "author": "Guest",
+                               "content": "hi", "is_bot": False})
+        self.assertEqual(self.led.read(etype="qa.inbound")[0]["seat"], "unknown")
+        [route] = self.led.read(etype="qa.route")
+        self.assertEqual((route["status"], route["reason"]),
+                         ("quarantined", "unknown_principal"))
 
 
-#: Captured verbatim from a live #dnd-table session, 2026-07-31. Kept as a
-#: fixture because every assumption I made about this shape from documentation
-#: was wrong in at least one way that would have failed silently.
+#: Embed captured from a live #dnd-table session, 2026-07-31, with the
+#: author_id/is_bot envelope fields emitted by the listener. Kept as a fixture
+#: because every assumption about this shape can otherwise fail silently.
 REAL_BEYOND20 = {
-    "id": "real-1", "author": "Beyond 20", "content": "",
+    "id": "real-1", "author": "Beyond 20", "author_id": "relay-20",
+    "is_bot": True, "content": "",
     "embeds": [{
         "title": "Initiative (+6)",
         "url": "https://www.dndbeyond.com/characters/93177801",
@@ -220,16 +228,16 @@ class TestRealBeyond20Payload(unittest.TestCase):
     def test_bot_name_has_a_space_in_it(self):
         """The extension is 'Beyond20'; the bot posts as 'Beyond 20'. Matching
         the product name would attribute nothing, all evening, silently."""
-        seat, _ = ingest.attribute_relay(self.cfg, REAL_BEYOND20)
-        self.assertEqual(seat, "william")
+        result = ingest.attribute_relay(self.cfg, REAL_BEYOND20)
+        self.assertEqual(result["seat"].id, "william")
 
     def test_relay_name_matching_ignores_spacing(self):
         cfg = TableConfig({
             "name": "B", "data_dir": self.dir, "gm": {"id": "gm", "display": "GM"},
             "seats": [{"id": "william", "display": "William", "sheet_id": "93177801"}],
             "transport": {"roll_relay_bots": ["Beyond20"]}})
-        seat, _ = ingest.attribute_relay(cfg, REAL_BEYOND20)
-        self.assertEqual(seat, "william")
+        result = ingest.attribute_relay(cfg, REAL_BEYOND20)
+        self.assertEqual(result["seat"].id, "william")
 
     def test_total_is_decoded_from_keycap_emoji(self):
         """The total exists only as ':two::zero:' in the field NAME."""
@@ -243,15 +251,15 @@ class TestRealBeyond20Payload(unittest.TestCase):
         self.assertEqual(parsed["total"], 11)
         self.assertNotIn("|", parsed["breakdown"])
 
-    def test_decorated_character_name_still_matches_by_name(self):
-        """'William Wildmirth P3/W4 Hex/Chain' vs a seat called 'William' —
-        equality would never match, so attribution is a substring."""
+    def test_decorated_character_name_is_not_substring_attributed(self):
+        """Will must never capture William (or a decorated character name)."""
         cfg = TableConfig({
             "name": "B", "data_dir": self.dir, "gm": {"id": "gm", "display": "GM"},
             "seats": [{"id": "william", "display": "William"}],
             "transport": {"roll_relay_bots": ["Beyond 20"]}})
-        seat, _ = ingest.attribute_relay(cfg, REAL_BEYOND20)
-        self.assertEqual(seat, "william")
+        result = ingest.attribute_relay(cfg, REAL_BEYOND20)
+        self.assertIsNone(result["seat"])
+        self.assertEqual(result["reason"], "relay_unattributed")
 
     def test_sheet_id_wins_over_a_coincidental_name(self):
         cfg = TableConfig({
@@ -259,8 +267,8 @@ class TestRealBeyond20Payload(unittest.TestCase):
             "seats": [{"id": "hex", "display": "Hex"},
                       {"id": "william", "display": "William", "sheet_id": "93177801"}],
             "transport": {"roll_relay_bots": ["Beyond 20"]}})
-        seat, _ = ingest.attribute_relay(cfg, REAL_BEYOND20)
-        self.assertEqual(seat, "william")
+        result = ingest.attribute_relay(cfg, REAL_BEYOND20)
+        self.assertEqual(result["seat"].id, "william")
 
     def test_the_sheets_own_modifier_is_captured(self):
         """Every relayed roll carries the number the character sheet computed,
@@ -314,9 +322,15 @@ class TestRollRelay(Base):
             transport={"roll_relay_bots": ["Beyond20"]}))
 
     def _roll(self, name, total="17"):
-        return {"id": f"m-{name}-{total}", "author": "Beyond20", "content": "",
+        digit = {"0": "zero", "1": "one", "2": "two", "3": "three",
+                 "4": "four", "5": "five", "6": "six", "7": "seven",
+                 "8": "eight", "9": "nine"}
+        keycap = "".join(f":{digit[c]}:" for c in str(total))
+        return {"id": f"m-{name}-{total}", "author": "Beyond20",
+                "author_id": "relay-1", "is_bot": True, "content": "",
                 "embeds": [{"title": f"{name}: Perception",
-                            "description": f"Result: {total}"}]}
+                            "fields": [{"name": keycap,
+                                        "value": "1d20 + 3 -> (14) + 3"}]}]}
 
     def test_relayed_roll_is_credited_to_the_right_seat(self):
         ingest.ingest_message(self.cfg, self.led, self._roll("Rowan"))
@@ -333,10 +347,11 @@ class TestRollRelay(Base):
         """A roll credited to the wrong seat is worse than one credited to
         none."""
         ingest.ingest_message(self.cfg, self.led, self._roll("Somebody Else"))
-        self.assertEqual(self.led.read(etype="qa.inbound"), [])
-        [c] = [r for r in self.led.read(etype="qa.command")
-               if r["cmd"] == "relay_unattributed"]
-        self.assertFalse(c["ok"])
+        [receipt] = self.led.read(etype="qa.inbound")
+        self.assertEqual(receipt["seat"], "unknown")
+        [route] = self.led.read(etype="qa.route")
+        self.assertEqual((route["status"], route["reason"]),
+                         ("quarantined", "relay_unattributed"))
 
     def test_relay_text_is_kept_even_without_keep_text(self):
         """Dice arithmetic is not the player's prose, and it is the evidence
@@ -347,8 +362,11 @@ class TestRollRelay(Base):
     def test_ordinary_bots_are_not_treated_as_relays(self):
         ingest.ingest_message(self.cfg, self.led,
                               {"id": "m-x", "author": "SomeBot",
+                               "author_id": "bot-x", "is_bot": True,
                                "content": "hello", "embeds": []})
-        self.assertEqual(self.led.read(etype="qa.inbound")[0]["seat"], "SomeBot")
+        self.assertEqual(self.led.read(etype="qa.inbound")[0]["seat"], "unknown")
+        self.assertEqual(self.led.read(etype="qa.route")[0]["status"],
+                         "quarantined")
 
     def test_relay_matches_a_seat_alias(self):
         cfg = TableConfig(dict(
@@ -369,25 +387,29 @@ class TestTypedRolls(Base):
         pairs.open_pair(self.led, "roll", "r1", seat="rowan",
                         detail="Perception")
 
-    def test_unambiguous_typed_roll_is_consumed(self):
+    def test_unambiguous_typed_roll_is_advisory(self):
         self._open()
         ingest.ingest_message(self.cfg, self.led,
                               {"id": "t1", "author": "Rowan", "content": "14"})
-        self.assertEqual(pairs.open_now(self.led, "roll"), [])
-        [act] = self.led.read(etype="act")
-        self.assertEqual((act["roll_total"], act["via"]), (14, "typed"))
+        self.assertEqual(len(pairs.open_now(self.led, "roll")), 1)
+        self.assertEqual(self.led.read(etype="act"), [])
+        [finding] = self.led.read(etype="qc.finding")
+        self.assertEqual((finding["check"], finding["candidate_total"]),
+                         ("roll_result_advisory", 14))
 
     def test_natural_twenty_is_understood(self):
         self._open()
         ingest.ingest_message(self.cfg, self.led,
                               {"id": "t2", "author": "Rowan", "content": "nat 20!"})
-        self.assertEqual(self.led.read(etype="act")[0]["roll_total"], 20)
+        self.assertEqual(self.led.read(etype="qc.finding")[0]["candidate_total"], 20)
+        self.assertEqual(len(pairs.open_now(self.led, "roll")), 1)
 
     def test_explicit_sum_uses_the_total_not_the_first_number(self):
         self._open()
         ingest.ingest_message(self.cfg, self.led,
                               {"id": "t3", "author": "Rowan", "content": "18 + 3 = 21"})
-        self.assertEqual(self.led.read(etype="act")[0]["roll_total"], 21)
+        self.assertEqual(self.led.read(etype="qc.finding")[0]["candidate_total"], 21)
+        self.assertEqual(len(pairs.open_now(self.led, "roll")), 1)
 
     def test_ambiguous_number_asks_instead_of_assuming(self):
         """A wrong total silently consumed corrupts the ledger, and nobody
@@ -396,11 +418,11 @@ class TestTypedRolls(Base):
         ingest.ingest_message(
             self.cfg, self.led,
             {"id": "t4", "author": "Rowan",
-             "content": "I move 30 feet and swing twice with my 2 daggers"})
+             "content": "I rolled 18, then got 21 maybe"})
         self.assertEqual(len(pairs.open_now(self.led, "roll")), 1)
         self.assertEqual(self.led.read(etype="act"), [])
         [f] = self.led.read(etype="qc.finding")
-        self.assertEqual(f["check"], "roll_needs_confirming")
+        self.assertEqual(f["check"], "roll_result_advisory")
         self.assertEqual(f["severity"], "attention")
 
     def test_no_detection_when_no_roll_is_outstanding(self):
@@ -418,13 +440,14 @@ class TestTypedRolls(Base):
         self.assertEqual(len(pairs.open_now(self.led, "roll")), 1)
         self.assertEqual(self.led.read(etype="qc.finding"), [])
 
-    def test_report_shows_how_rolls_arrived(self):
+    def test_report_surfaces_advisory_without_counting_a_roll(self):
         self._open()
         ingest.ingest_message(self.cfg, self.led,
                               {"id": "t7", "author": "Rowan", "content": "14"})
         from tablekit import ux as ux_mod
-        self.assertEqual(ux_mod.transport_stats(self.led)["rolls_by_route"],
-                         {"typed": 1})
+        stats = ux_mod.transport_stats(self.led)
+        self.assertIsNone(stats["rolls_by_route"])
+        self.assertEqual(stats["routing_advisories"], 1)
 
 
 class TestIngestEmits(Base):
@@ -439,16 +462,18 @@ class TestIngestEmits(Base):
     def test_a_relayed_roll_emits_the_total(self):
         cfg = TableConfig(dict(CFG, data_dir=self.dir,
                                transport={"roll_relay_bots": ["Beyond 20"]}))
-        msg = {"id": "e2", "author": "Beyond 20", "content": "",
+        msg = {"id": "e2", "author": "Beyond 20", "author_id": "relay-e2",
+               "is_bot": True, "content": "",
                "embeds": [{"title": "Perception (+3)",
-                           "author": {"name": "Rowan of the Ash"},
+                           "author": {"name": "Rowan"},
                            "fields": [{"name": ":one::seven:", "value": "1d20 + 3"}]}]}
         evs = ingest.ingest_message(cfg, self.led, msg)
         self.assertEqual(ingest.summarize(cfg, self.led, msg, evs),
                          "Rowan rolled Perception: 17 [Beyond 20]")
 
     def test_nothing_ingested_emits_nothing(self):
-        msg = {"author": "the gm bot", "content": "my own beat"}
+        msg = {"id": "gm-e1", "author": "the gm bot", "is_bot": True,
+               "content": "my own beat"}
         evs = ingest.ingest_message(self.cfg, self.led, msg)
         self.assertIsNone(ingest.summarize(self.cfg, self.led, msg, evs))
 

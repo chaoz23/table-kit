@@ -49,9 +49,15 @@ Without a chat platform, drive it by hand:
 tablekit beat "The causeway is coming up out of the water. Rowan, you are first onto the wet stone." --cue rowan
 tablekit inbound --seat rowan --text "I go slow, watching the water line."
 tablekit roll --seat rowan "Perception to place the sound"
-tablekit consumed roll-1785440000-0000-3f2a
+tablekit consumed roll-1785440000000-4f3c2a107af149cc91f62331dbf67adc
 tablekit qc                 # between beats — one line, or a defect
 ```
+
+`inbound` closes at most one cue/check-in obligation. If more than one is open
+for the seat it refuses the ambiguity; rerun with `--pair ID` to correlate the
+specific one. Blank text acknowledges nothing. A typed roll result remains
+advisory—use the returned roll ID with `consumed` after correlating and
+confirming it, or rely on a verified structured roll relay.
 
 When someone says something that tells you how the evening is landing, record
 it with their own words attached:
@@ -82,7 +88,12 @@ but it has no downstream commit acknowledgment, durable checkpoint, or
 cold-start backfill yet. Treat it as live streaming, not proof of complete
 session capture; see [TRANSPORT.md](TRANSPORT.md#3-resume-is-not-a-durable-checkpoint).
 
-and post through the helper so mentions are guaranteed and beats are recorded:
+The listener must supply stable message IDs. Every ID is durably receipted
+before routing, including quarantined messages; missing IDs cannot resolve
+state. Unknown identities and ambiguous pair matches stay visible in
+`qa.route` instead of being guessed.
+
+Then post through the helper so mentions are guaranteed and beats are recorded:
 
 ```python
 from tablekit import load, post

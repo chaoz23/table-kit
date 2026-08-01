@@ -25,7 +25,16 @@ mutated. The writer opens with append semantics, takes an exclusive advisory
 lock where the platform provides one, writes one complete line, and calls
 `fsync` before acknowledging success. A crash can still leave a partial final
 line; readers surface it as a line-local `_malformed` diagnostic instead of
-silently dropping it or counting it.
+silently dropping it or counting it. The next locked append first restores a
+newline boundary, preserving that diagnostic while preventing the next valid
+record from being fused into—and lost with—the truncated row.
+
+Source receipts and pair opens/closes use `append_once`: under the same lock it
+scans valid rows for the unique key, appends only when unowned, and then
+`fsync`s. This supplies repo-local atomic deduplication without pretending the
+JSONL is an indexed event store. The scan is linear in session size. On a
+platform without advisory file locks it retains append safety but not
+cross-process check-and-insert atomicity, so use one host-owned writer.
 
 These guarantees are for a local filesystem. Network filesystems may not
 honor append, advisory-lock, or durability semantics in the same way. Use one
@@ -37,8 +46,10 @@ Ledgers are plaintext. Table-kit does not implement application-level
 encryption or key management. Use full-disk or encrypted-volume storage,
 encrypted backups, and the retention policy appropriate to the table. Do not
 enable `--keep-text` unless retaining player prose is an explicit table
-decision. Transport tokens remain environment variables and are never read
-from config values.
+decision. Source receipts retain a SHA-256 payload fingerprint for replay
+conflict detection; a hash is not encryption and short/guessable text may be
+dictionary-tested. Transport tokens remain environment variables and are never
+read from config values.
 
 ## Integrity and AI-agent authority
 

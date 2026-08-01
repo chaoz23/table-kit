@@ -28,6 +28,7 @@ import json
 import math
 import os
 import re
+import unicodedata
 
 REQUIRED = ("name", "seats")
 
@@ -78,6 +79,20 @@ TRANSPORT_KEYS = {
     "kind", "channel_id", "bot_user_id", "token_env", "roll_relay_bots",
 }
 SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def normalize_identity(value):
+    """Normalize an identity token without turning it into a substring.
+
+    NFKC handles canonically equivalent and compatibility Unicode spellings;
+    casefold handles non-ASCII case; whitespace folding prevents a platform's
+    display formatting from creating a second identity.  The resulting token
+    still has to match in full: ``Will`` never matches ``William``.
+    """
+    if not isinstance(value, str):
+        return ""
+    normalized = unicodedata.normalize("NFKC", value).strip().casefold()
+    return " ".join(normalized.split())
 
 
 def _unknown_keys(data, allowed, path):
@@ -137,11 +152,17 @@ class Seat:
         aliases = d.get("aliases", [])
         if not isinstance(aliases, list):
             raise ConfigError(f"{path}.aliases: expected a list of strings")
-        self.aliases = [_text(a, f"{path}.aliases[{i}]").casefold()
+        self.aliases = [normalize_identity(_text(a, f"{path}.aliases[{i}]"))
                         for i, a in enumerate(aliases)]
         if len(self.aliases) != len(set(self.aliases)):
             raise ConfigError(
                 f"{path}.aliases: duplicate aliases are ambiguous; keep each once")
+        redundant = ({normalize_identity(self.id), normalize_identity(self.display)}
+                     & set(self.aliases))
+        if redundant:
+            raise ConfigError(
+                f"{path}.aliases: {sorted(redundant)[0]!r} duplicates this "
+                "seat's id/display; remove the redundant identity")
         self.player = _text(d.get("player"), f"{path}.player", optional=True)
         # Exact attribution key for relayed rolls. A character sheet id cannot
         # be ambiguous the way a display name can, and real character names
@@ -167,8 +188,9 @@ class Seat:
                 "platform's literal form, e.g. \"<@1234567890>\".")
 
     def matches(self, name):
-        n = (name or "").strip().casefold()
-        return n in ({self.id.casefold(), self.display.casefold()} | set(self.aliases))
+        n = normalize_identity(name)
+        return n in ({normalize_identity(self.id), normalize_identity(self.display)}
+                     | set(self.aliases))
 
     def as_dict(self):
         return {"id": self.id, "display": self.display, "kind": self.kind,
@@ -223,6 +245,12 @@ class TableConfig:
             _text(relay, f"config.transport.roll_relay_bots[{i}]")
             for i, relay in enumerate(relays)
         ]
+        relay_keys = [normalize_identity(relay).replace(" ", "")
+                      for relay in self.transport["roll_relay_bots"]]
+        if len(relay_keys) != len(set(relay_keys)):
+            raise ConfigError(
+                "config.transport.roll_relay_bots: duplicate normalized relay "
+                "identities are ambiguous; keep each once")
 
         raw_data_dir = _text(data.get("data_dir", "./table-data"),
                              "config.data_dir")
@@ -254,7 +282,8 @@ class TableConfig:
         sheets = {}
         seats = self.seats + ([self.gm] if self.gm else [])
         for seat in seats:
-            tokens = {seat.id.casefold(), seat.display.casefold(), *seat.aliases}
+            tokens = {normalize_identity(seat.id),
+                      normalize_identity(seat.display), *seat.aliases}
             for token in tokens:
                 owner = identities.get(token)
                 if owner is not None and owner is not seat:

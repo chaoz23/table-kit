@@ -967,7 +967,7 @@ class TestUncheckedIsNotClean(TempLedger):
     def test_a_bare_finding_does_NOT_count_as_having_checked(self):
         """Superseded: this originally asserted that any qc.finding meant the
         session had been checked. It does not. Ingest emits findings of its own
-        (`roll_needs_confirming`), so that rule let an unchecked session claim
+        (`roll_result_advisory`), so that rule let an unchecked session claim
         'Defects — none' again — the same lie one level down. Only `qc.run`,
         written solely by detector.record(), is proof."""
         self._session()
@@ -1015,11 +1015,11 @@ class TestUncheckedIsNotClean(TempLedger):
             self.assertNotIn(c, checks)
 
     def test_a_finding_from_elsewhere_does_not_count_as_having_checked(self):
-        """The second layer of the same lie. `roll_needs_confirming` is emitted
+        """The second layer of the same lie. `roll_result_advisory` is emitted
         by INGEST, not by the qc suite, so a session where nobody ran qc had
         findings in it and the report went back to claiming clean."""
         self._session()
-        self.led.append("qc.finding", check="roll_needs_confirming",
+        self.led.append("qc.finding", check="roll_result_advisory",
                         detail="was that a 14?", severity="attention",
                         seat="rowan")
         rep = report.build(self.led, self.cfg)

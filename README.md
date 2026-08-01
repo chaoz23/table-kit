@@ -58,6 +58,22 @@ pointed straight at it with no export step.
 | `uxr` | how did it *feel* from a seat?         | inferred from ordinary speech, then asked about at the close |
 | `out` | did any of it actually work?           | intent → payoff pairs |
 
+Inbound handling is deliberately fail-closed. A source-native message ID is
+committed before routing and deduplicates replays, including messages that are
+rejected or quarantined. An inbound can resolve **at most one** typed obligation:
+an explicit `pair_id` wins, otherwise exactly one compatible open pair must
+exist for that seat. Blank messages acknowledge nothing; ambiguous, unknown,
+cross-seat, and cross-kind correlations remain open and are surfaced in
+`qa.route`.
+
+Identity fallback is exact after Unicode/case/whitespace normalization, never a
+substring guess (`Will` does not capture `William`). Unknown speakers remain
+`unknown`. Relayed rolls additionally require a configured relay name, an
+actual bot flag, exact sheet ID or exact configured alias, a numeric result,
+and a plausible declared natural-die range. Ordinary prose such as `14` or
+`nat 20` is **advisory only**; damage, healing, hit points, movement, and other
+non-roll quantities do not auto-resolve a roll.
+
 ### The `uxr` lane
 
 This is the one that does not exist elsewhere, and the one the no-syntax rule
@@ -149,7 +165,8 @@ docs/            INSTRUMENTATION.md is the one to read
 Same convention as the sibling projects: **0** clean, **1** findings worth
 looking at, **2** refused. Exit 2 is an honest refusal — bad input, or not
 enough happened to say anything — and it is deliberately distinct from "the
-session was fine."
+session was fine." An unresolved routing quarantine is exit 1 even when it
+safely prevented a bad state transition; operator work still remains.
 
 ## Docs
 
@@ -168,8 +185,9 @@ session was fine."
 
 `tool.json` describes the command surface — all of it operator-side, none of it
 touched by anyone at the table. `tablekit schema` prints the event schema,
-signal buckets and exit codes as JSON. The session file is JSONL with one
-object per line and a documented type registry; reading it needs no library.
+typed pair outcomes, signal buckets and exit codes as JSON. The session file is
+JSONL with one object per line and a documented type registry; reading it needs
+no library.
 Treat it as table-private data and as evidence, not a cryptographically trusted
 audit log; the exact boundary is documented in
 [DATA_SAFETY.md](docs/DATA_SAFETY.md).
