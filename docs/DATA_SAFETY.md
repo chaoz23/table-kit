@@ -40,6 +40,16 @@ These guarantees are for a local filesystem. Network filesystems may not
 honor append, advisory-lock, or durability semantics in the same way. Use one
 host-owned writer when the ledger is shared across processes or machines.
 
+Outbound posting adds a narrower guarantee: calls using the same operation ID
+take a private sibling-file byte-range lock before inspecting or advancing that
+saga. It is bounded, crash-released, and process-safe on POSIX local
+filesystems; different operation IDs use different ranges. The lock file holds
+no table content and persists across posts. Callers must not delete or recreate it
+while posting: replacing an active lock file can split ownership between processes.
+Posting fails closed where POSIX range locks are unavailable. This does not
+make unrelated read/modify/write workflows on the JSONL transactional, so the
+one-writer rule still applies to the broader session engine.
+
 ## Confidentiality
 
 Ledgers are plaintext. Table-kit does not implement application-level
@@ -50,6 +60,22 @@ decision. Source receipts retain a SHA-256 payload fingerprint for replay
 conflict detection; a hash is not encryption and short/guessable text may be
 dictionary-tested. Transport tokens remain environment variables and are never
 read from config values.
+
+Outbound Discord writes are disabled unless `transport.write_enabled` is
+explicitly `true`. The built-in sender validates channel, bot identity, and
+token presence before the prepare record or first network call. Generated or
+user-supplied mention text cannot ping by default; only the configured cue
+target is allowlisted. This limits accidental authority, but it does not turn
+the process into a permission broker: enable the flag only for a channel the
+operator has explicitly authorized.
+
+The posting saga stores the complete bounded source text and exact outbound
+payload plan in `qa.post.prepare`, content excerpts in finalized play records,
+and remote message IDs and deterministic nonces in receipts. This is necessary
+for recovery without caller memory, and means outbound GM prose is retained
+even when player `--keep-text` is off. Treat it all as table-private data. A
+partial operation remains in the ledger on purpose; retention tooling must not
+discard it as a failed temporary action.
 
 ## Integrity and AI-agent authority
 
@@ -66,6 +92,22 @@ provenance at the host boundary. The suite-wide `TableEvent v1` envelope,
 integrity chain, authority downgrade rules, migration, and rollback contract
 are portfolio decisions tracked in `PORT-002` and `PORT-003`; this repository
 does not silently define them ahead of that decision.
+
+Crash recovery also crosses an authority boundary. Built-in reconciliation
+uses bounded Discord history, exact nonce/content matching, and
+`transport.bot_user_id`; if history does not cover the prepare time it refuses
+to resend. Built-in history also refuses malformed IDs/timestamps, reordered or
+repeated pages, and a claimed boundary not established by the oldest validated
+message. A custom history adapter is trusted to authenticate authors and state
+coverage truthfully; its `complete` assertion cannot be independently proven by
+the caller. Nonce enforcement is only a short-term duplicate guard, not durable
+proof of delivery.
+
+Before preparing or sending an outbound operation, the transport audits the
+whole ledger and fails closed if any row is malformed. Reporting consumers can
+omit diagnostic rows from calculations, but the posting path cannot safely
+assume an unreadable row was unrelated: it may be the durable receipt for a
+message Discord already accepted.
 
 ## Scale, rotation, and migration
 

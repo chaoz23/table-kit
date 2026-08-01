@@ -32,13 +32,22 @@ view; `Ledger.read()` with no filter remains the diagnostic audit surface.
 
 ### `qa` — did the machinery work?
 
-`qa.post`, `qa.post_failed`, `qa.inbound`, `qa.route`, `qa.listener`,
-`qa.command`.
+`qa.post.prepare`, `qa.post.receipt`, `qa.post.partial`, `qa.post.reconcile`,
+`qa.post.commit`, compatibility `qa.post`, `qa.post_failed`, `qa.inbound`,
+`qa.route`, `qa.listener`, `qa.command`.
 
 Delivery, latency, listener uptime, command failures. This lane exists because
 the most expensive failure in a hybrid table is not a bug, it is a *silent*
 bug: a listener that dies mid-session means play continues, nothing errors, and
 the record simply stops.
+
+Outbound posting uses prepare/deliver/commit semantics. `prepare` records the
+complete bounded immutable source/payload plan before network I/O, one
+`receipt` durably binds each delivered Discord message ID to its operation and
+chunk, `partial` makes incomplete delivery explicit, `reconcile` records a
+covered remote-history check, and `commit` is the only terminal success. The
+older `qa.post` summary remains for report compatibility but is written only
+during successful finalization.
 
 Player prose is **not stored by default**. The kit records that a seat spoke
 and roughly how much. Accumulating a transcript changes what this tool is, so

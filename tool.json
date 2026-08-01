@@ -21,6 +21,12 @@
   }
  },
  "output": "Human-readable text by default; --json where offered. The session file is JSONL, one object per line, every line carrying ts and type.",
+ "transport": {
+  "write_default": "disabled; transport.write_enabled must be the JSON boolean true",
+  "inspect": "Python: post.prepare(cfg, text, cue=..., operation_id=...) returns the immutable bounded payload plan without ledger or network I/O.",
+  "deliver": "Python: post.post(...) returns disabled, invalid, failed, partial, or committed. Only committed is complete delivery. Persist operation_id; post.resume(...) reconstructs the complete bounded plan from the ledger after interruption.",
+  "safety": "Unintended mentions are denied; only the explicit cue target can ping once. Every chunk is bounded and nonce-protected; successes are durably receipted, and interrupted unreceipted delivery is remotely reconciled before resume can resend. Live enablement remains gated by docs/TRANSPORT.md."
+ },
  "notes": "Three contracts the tool will not bend. (1) THE TABLE SPEAKS ENGLISH: players are never given a command syntax, token vocabulary or keywords - text RPGs did that because 1980s parsers could not understand sentences, and an agent GM that reintroduces it throws away its only advantage over a parser game. Enforced by tests. All commands here are operator-side. (2) An inferred signal is advisory in every path and can never become a defect. (3) Below three occurrences the report lists individual moments and refuses to state a rate. No composite score is produced anywhere, by design.",
  "exit_codes": {
   "0": "clean",

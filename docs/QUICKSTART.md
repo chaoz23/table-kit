@@ -89,22 +89,61 @@ restriction. The bot user ID comes from Discord's READY event, not config.
 The current listener can Resume recoverable disconnects during one process,
 but it has no downstream commit acknowledgment, durable checkpoint, or
 cold-start backfill yet. Treat it as live streaming, not proof of complete
-session capture; see [TRANSPORT.md](TRANSPORT.md#3-resume-is-not-a-durable-checkpoint).
+session capture; see [TRANSPORT.md](TRANSPORT.md#4-resume-is-not-a-durable-checkpoint).
 
 The listener must supply stable message IDs. Every ID is durably receipted
 before routing, including quarantined messages; missing IDs cannot resolve
 state. Unknown identities and missing or invalid pair correlations stay visible
 in `qa.route` instead of being guessed.
 
-Then post through the helper so mentions are guaranteed and beats are recorded:
+Outbound writes are disabled in the generated config. You can inspect the
+exact bounded payload without a token, ledger write, or network call:
 
 ```python
 from tablekit import load, post
-from tablekit.events import Ledger
 
 cfg = load()
+plan = post.prepare(
+    cfg,
+    "Vesh, the water has gone quiet around your ankles.",
+    cue="vesh",
+    operation_id="session-1-beat-17",
+)
+print(plan["payloads"])
+```
+
+Only in an owned test channel, after the production gates in
+[TRANSPORT.md](TRANSPORT.md) are satisfied, set `transport.write_enabled` to
+the JSON boolean `true`, configure `channel_id`, `bot_user_id`, and
+`token_env`, then call the helper. Retain and reuse the operation ID if the
+caller is interrupted:
+
+```python
+from tablekit.events import Ledger
+
+cfg = load()  # reload after changing table.json
 led = Ledger(cfg.ledger_path())
-post.post(cfg, led, "Vesh, the water has gone quiet around your ankles.", cue="vesh")
+result = post.post(
+    cfg,
+    led,
+    "Vesh, the water has gone quiet around your ankles.",
+    cue="vesh",
+    operation_id="session-1-beat-17",
+)
+if result["status"] != "committed":
+    # disabled / invalid / failed / partial are refusals, not delivered beats
+    raise RuntimeError(result)
+```
+
+The prepare/receipt/commit records make completed retries no-ops and partial
+delivery repairable. They do not make the current listener a production
+control plane; read the explicit limits before enabling writes.
+
+After an interrupted call, the durable prepare record contains the complete
+bounded plan. Resume it without reconstructing the original text:
+
+```python
+result = post.resume(cfg, led, "session-1-beat-17")
 ```
 
 ## 5. Close the evening

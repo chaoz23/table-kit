@@ -77,6 +77,7 @@ SEAT_KEYS = {
 }
 TRANSPORT_KEYS = {
     "kind", "channel_id", "bot_user_id", "token_env", "roll_relay_bots",
+    "write_enabled",
 }
 SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -251,6 +252,10 @@ class TableConfig:
             raise ConfigError(
                 "config.transport.roll_relay_bots: duplicate normalized relay "
                 "identities are ambiguous; keep each once")
+        write_enabled = transport.get("write_enabled", False)
+        if not isinstance(write_enabled, bool):
+            raise ConfigError("config.transport.write_enabled: expected a boolean")
+        self.transport["write_enabled"] = write_enabled
 
         raw_data_dir = _text(data.get("data_dir", "./table-data"),
                              "config.data_dir")

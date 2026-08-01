@@ -4,16 +4,25 @@ No network anywhere: `post()` takes a `send_fn` seam and everything else works
 on the session file.
 """
 
+import hashlib
+import io
 import json
+import multiprocessing
 import os
+import re
 import sys
 import tempfile
+import threading
+import time
 import unittest
+import unicodedata
+import urllib.error
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tablekit import engine, ingest, pairs, post  # noqa: E402
-from tablekit.config import TableConfig  # noqa: E402
+from tablekit.config import ConfigError, TableConfig  # noqa: E402
 from tablekit.events import Ledger  # noqa: E402
 
 CFG = {
@@ -23,6 +32,7 @@ CFG = {
         {"id": "rowan", "display": "Rowan", "kind": "human"},
         {"id": "vesh", "display": "Vesh", "kind": "agent", "mention": "<@42>"},
     ],
+    "transport": {"write_enabled": True},
 }
 
 
@@ -32,10 +42,12 @@ class Base(unittest.TestCase):
         self.led = Ledger(os.path.join(self.dir, "s.jsonl"))
         self.cfg = TableConfig(dict(CFG, data_dir=self.dir))
         self.sent = []
+        self.payloads = []
 
-    def send(self, _cfg, text):
-        self.sent.append(text)
-        return f"msg-{len(self.sent)}"
+    def send(self, _cfg, payload):
+        self.payloads.append(payload)
+        self.sent.append(payload["content"])
+        return {"id": f"msg-{len(self.sent)}", "nonce": payload["nonce"]}
 
 
 class TestSplit(unittest.TestCase):
@@ -56,6 +68,80 @@ class TestSplit(unittest.TestCase):
     def test_every_chunk_within_limit(self):
         text = ("paragraph text here. " * 60 + "\n\n") * 8
         self.assertTrue(all(len(c) <= 900 for c in post.split(text, limit=900)))
+
+    def test_unbroken_input_is_hard_split_inside_the_limit(self):
+        text = "x" * 5000
+        chunks = post.split(text, limit=2000)
+        self.assertEqual("".join(chunks), text)
+        self.assertEqual([post.utf16_units(c) for c in chunks], [2000, 2000, 1000])
+
+    def test_astral_characters_use_conservative_utf16_measurement(self):
+        text = "😀" * 2500
+        chunks = post.split(text, limit=2000)
+        self.assertEqual("".join(chunks), text)
+        self.assertTrue(all(post.utf16_units(c) <= 2000 for c in chunks))
+        self.assertEqual(len(chunks[0]), 1000)
+
+    def test_zwj_and_combining_graphemes_are_not_split(self):
+        family = "👩‍👩‍👧‍👦"
+        text = (family + "e\u0301") * 30
+        chunks = post.split(text, limit=30)
+        self.assertEqual("".join(chunks), text)
+        for chunk in chunks:
+            self.assertFalse(chunk.startswith("\u200d"))
+            self.assertFalse(chunk.endswith("\u200d"))
+            self.assertFalse(unicodedata.combining(chunk[0]))
+
+    def test_indic_virama_conjunct_is_not_split(self):
+        conjunct = "क्ष"
+        chunks = post.split(conjunct * 10, limit=5)
+        self.assertEqual("".join(chunks), conjunct * 10)
+        self.assertTrue(all(not chunk.startswith("ष") for chunk in chunks))
+        self.assertTrue(all(not chunk.endswith("्") for chunk in chunks))
+
+    def test_hangul_jamo_and_prepend_clusters_are_not_split(self):
+        hangul = "\u1100\u1161"  # choseong kiyeok + jungseong a
+        prepend = "\u0600A"
+        zwnj = "a\u200c"
+        thai_spacing_mark = "\u0e01\u0e33"
+        halfwidth_voiced = "\uff76\uff9e"
+        for cluster in (hangul, prepend, zwnj, thai_spacing_mark,
+                        halfwidth_voiced):
+            with self.subTest(cluster=cluster):
+                self.assertEqual(list(post._graphemes(cluster)), [cluster])
+        with self.assertRaises(post.PostError):
+            post.split(hangul, limit=1)
+        with self.assertRaises(post.PostError):
+            post.split(prepend, limit=1)
+
+    def test_single_pathological_grapheme_is_refused_not_broken(self):
+        with self.assertRaises(post.PostError):
+            post.split("a" + "\u0301" * 2100, limit=2000)
+
+    def test_unpaired_surrogate_is_refused(self):
+        with self.assertRaises(post.PostError):
+            post.split("bad-\ud800", limit=2000)
+
+    def test_one_operation_has_a_hard_message_count_cap(self):
+        cfg = TableConfig(dict(CFG, data_dir=tempfile.mkdtemp()))
+        led = Ledger(os.path.join(cfg.data_dir, "bounded.jsonl"))
+        called = []
+        result = post.post(
+            cfg, led, "x" * (post.DISCORD_CONTENT_LIMIT
+                              * (post.MAX_CHUNKS_PER_OPERATION + 1)),
+            send_fn=lambda *_: called.append(True), operation_id="too-large")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("content_too_large", result["error"])
+        self.assertEqual(called, [])
+        self.assertEqual(led.records(), [])
+
+        result = post.post(
+            cfg, led, "x" * post.MAX_SOURCE_UTF16_UNITS, cue="vesh",
+            send_fn=lambda *_: called.append(True), operation_id="too-many")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("too_many_chunks", result["error"])
+        self.assertEqual(called, [])
+        self.assertEqual(led.records(), [])
 
 
 class TestPost(Base):
@@ -110,6 +196,1007 @@ class TestPost(Base):
         repairs = [c for c in self.led.read(etype="qa.command")
                    if c["cmd"] == "mention_repair"]
         self.assertEqual(len(repairs), 3)
+
+    def test_only_target_user_is_allowed_to_ping_and_only_once(self):
+        text = "@everyone <@&99> <@777> <@00042> <@42> Vesh? <@!42>"
+        result = post.post(self.cfg, self.led, text, cue="vesh",
+                           send_fn=self.send, operation_id="mentions-1")
+        self.assertTrue(result["ok"], result)
+        rendered = "".join(payload["content"] for payload in self.payloads)
+        self.assertEqual(len(re.findall(r"<@!?42>", rendered)), 1)
+        self.assertNotIn("<@00042>", rendered)
+        self.assertIn("@everyone", rendered)
+        self.assertIn("<@&99>", rendered)
+        self.assertIn("<@777>", rendered)
+        self.assertEqual(self.payloads[0]["allowed_mentions"],
+                         {"users": ["42"], "replied_user": False})
+        self.assertNotIn("parse", self.payloads[0]["allowed_mentions"])
+
+    def test_target_mention_is_in_first_chunk_without_exceeding_limit(self):
+        result = post.post(self.cfg, self.led, "x" * 5000, cue="vesh",
+                           send_fn=self.send, operation_id="bounded-mention")
+        self.assertTrue(result["ok"])
+        self.assertIn("<@42>", self.payloads[0]["content"])
+        self.assertEqual(sum(p["content"].count("<@42>") for p in self.payloads), 1)
+        self.assertTrue(all(post.utf16_units(p["content"]) <= 2000
+                            for p in self.payloads))
+        for payload in self.payloads[1:]:
+            self.assertEqual(payload["allowed_mentions"],
+                             {"parse": [], "replied_user": False})
+
+    def test_posting_is_disabled_without_explicit_config_consent(self):
+        cfg = TableConfig(dict(CFG, data_dir=self.dir, transport={}))
+        called = []
+        result = post.post(cfg, self.led, "hello",
+                           send_fn=lambda *_: called.append(True))
+        self.assertEqual(result["status"], "disabled")
+        self.assertEqual(called, [])
+        self.assertEqual(self.led.records(), [])
+
+    def test_write_enabled_must_be_boolean(self):
+        with self.assertRaises(ConfigError):
+            TableConfig(dict(CFG, data_dir=self.dir,
+                             transport={"write_enabled": "yes"}))
+
+    def test_unknown_target_and_malformed_agent_mention_fail_before_send(self):
+        result = post.post(self.cfg, self.led, "hello", cue="nobody",
+                           send_fn=self.send)
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(self.payloads, [])
+        malformed = dict(CFG)
+        malformed["seats"] = [
+            {"id": "vesh", "display": "Vesh", "kind": "agent", "mention": "42"}]
+        malformed["transport"] = {"write_enabled": True}
+        cfg = TableConfig(dict(malformed, data_dir=self.dir))
+        result = post.post(cfg, self.led, "hello", cue="vesh", send_fn=self.send)
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("invalid_target_mention", result["error"])
+        self.assertEqual(self.payloads, [])
+
+    def test_invalid_kind_fails_before_ledger_or_network(self):
+        result = post.post(self.cfg, self.led, "hello", kind={"not": "text"},
+                           send_fn=self.send)
+        self.assertEqual(result["status"], "invalid")
+        self.assertEqual(self.payloads, [])
+        self.assertEqual(self.led.records(), [])
+
+    def test_live_sender_refuses_missing_recovery_identity_and_token(self):
+        no_bot = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"write_enabled": True, "channel_id": "123"}))
+        result = post.post(no_bot, self.led, "hello")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("missing_bot_user", result["error"])
+        self.assertEqual(self.led.records(), [])
+
+        no_token = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"write_enabled": True, "channel_id": "123",
+                       "bot_user_id": "456", "token_env": "ABSENT_TABLE_TOKEN"}))
+        with patch.dict(os.environ, {}, clear=True):
+            result = post.post(no_token, self.led, "hello")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("invalid_config", result["error"])
+        self.assertEqual(self.led.records(), [])
+
+        bad_id = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"write_enabled": True, "channel_id": "not-a-channel",
+                       "bot_user_id": "456"}))
+        result = post.post(bad_id, self.led, "hello")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("invalid_channel_id", result["error"])
+        self.assertEqual(self.led.records(), [])
+
+
+class TestPostingSaga(Base):
+    def test_success_records_prepare_each_receipt_and_commit_last(self):
+        result = post.post(self.cfg, self.led, "x" * 3000, cue="vesh",
+                           send_fn=self.send, operation_id="saga-success")
+        self.assertEqual(result["status"], "committed")
+        rows = [r for r in self.led.records()
+                if r.get("operation_id") == "saga-success"]
+        self.assertEqual(rows[0]["type"], "qa.post.prepare")
+        self.assertEqual(rows[-1]["type"], "qa.post.commit")
+        self.assertEqual(len([r for r in rows if r["type"] == "qa.post.receipt"]),
+                         result["chunks"])
+        self.assertEqual(len([r for r in rows if r["type"] == "qa.post"]), 1)
+        self.assertEqual(len([r for r in rows if r["type"] == "ux.beat"]), 1)
+        self.assertEqual(len([r for r in rows if r["type"] == "out.open"]), 1)
+        self.assertEqual(result["message_ids"],
+                         [r["message_id"] for r in rows
+                          if r["type"] == "qa.post.receipt"])
+
+    def test_completed_operation_retry_is_a_noop(self):
+        first = post.post(self.cfg, self.led, "hello", send_fn=self.send,
+                          operation_id="same-operation")
+        sent = len(self.payloads)
+        second = post.post(self.cfg, self.led, "hello", send_fn=self.send,
+                           operation_id="same-operation")
+        self.assertTrue(first["ok"] and second["ok"])
+        self.assertTrue(second["resumed"])
+        self.assertEqual(len(self.payloads), sent)
+        self.assertEqual(first["message_ids"], second["message_ids"])
+
+    def test_concurrent_same_operation_sends_once_across_threads(self):
+        entered = threading.Event()
+        release = threading.Event()
+        sends = []
+        results = []
+
+        def sender(_cfg, payload):
+            sends.append(payload["nonce"])
+            entered.set()
+            self.assertTrue(release.wait(3))
+            return {"id": "one-message", "nonce": payload["nonce"]}
+
+        def worker():
+            results.append(post.post(
+                self.cfg, Ledger(self.led.path), "hello", send_fn=sender,
+                operation_id="thread-race"))
+
+        first = threading.Thread(target=worker)
+        second = threading.Thread(target=worker)
+        first.start()
+        self.assertTrue(entered.wait(2))
+        second.start()
+        release.set()
+        first.join(3)
+        second.join(3)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(len(sends), 1)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["status"] == "committed"
+                            for result in results), results)
+        rows = [row for row in Ledger(self.led.path).records()
+                if row.get("operation_id") == "thread-race"]
+        self.assertEqual(len([row for row in rows
+                              if row["type"] == "qa.post.prepare"]), 1)
+        self.assertEqual(len([row for row in rows
+                              if row["type"] == "qa.post.receipt"]), 1)
+
+    def test_concurrent_different_operations_do_not_block_each_other(self):
+        first_entered = threading.Event()
+        second_entered = threading.Event()
+        release = threading.Event()
+        results = []
+        first_nonce = post.prepare(
+            self.cfg, "first", operation_id="parallel-a")["payloads"][0]["nonce"]
+
+        def sender(_cfg, payload):
+            event = first_entered if payload["nonce"] == first_nonce else second_entered
+            event.set()
+            self.assertTrue(release.wait(3))
+            return {"id": payload["nonce"], "nonce": payload["nonce"]}
+
+        def worker(text, operation_id):
+            results.append(post.post(
+                self.cfg, Ledger(self.led.path), text, send_fn=sender,
+                operation_id=operation_id))
+
+        first = threading.Thread(target=worker, args=("first", "parallel-a"))
+        second = threading.Thread(target=worker, args=("second", "parallel-b"))
+        first.start()
+        self.assertTrue(first_entered.wait(2))
+        second.start()
+        self.assertTrue(second_entered.wait(2))
+        release.set()
+        first.join(3)
+        second.join(3)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result["status"] == "committed"
+                            for result in results), results)
+
+    @unittest.skipUnless(
+        post.fcntl is not None and "fork" in multiprocessing.get_all_start_methods(),
+        "requires POSIX process locks and fork")
+    def test_concurrent_same_operation_sends_once_across_processes(self):
+        context = multiprocessing.get_context("fork")
+        entered = context.Event()
+        attempting = context.Event()
+        release = context.Event()
+        sends = context.Value("i", 0)
+        results = context.Queue()
+        raw_cfg = dict(CFG, data_dir=self.dir)
+
+        def worker(block):
+            cfg = TableConfig(raw_cfg)
+
+            def sender(_cfg, payload):
+                with sends.get_lock():
+                    sends.value += 1
+                if block:
+                    entered.set()
+                    if not release.wait(3):
+                        raise RuntimeError("test release timed out")
+                return {"id": "one-message", "nonce": payload["nonce"]}
+
+            attempting.set()
+            results.put(post.post(
+                cfg, Ledger(self.led.path), "hello", send_fn=sender,
+                operation_id="process-race"))
+
+        first = context.Process(target=worker, args=(True,))
+        second = context.Process(target=worker, args=(False,))
+        try:
+            first.start()
+            self.assertTrue(entered.wait(2))
+            attempting.clear()
+            second.start()
+            self.assertTrue(attempting.wait(2))
+            time.sleep(0.1)
+            self.assertEqual(sends.value, 1)
+            release.set()
+            first.join(3)
+            second.join(3)
+            self.assertEqual((first.exitcode, second.exitcode), (0, 0))
+            outcomes = [results.get(timeout=2), results.get(timeout=2)]
+            self.assertTrue(all(item["status"] == "committed"
+                                for item in outcomes), outcomes)
+            self.assertEqual(sends.value, 1)
+        finally:
+            release.set()
+            for process in (first, second):
+                if process.is_alive():
+                    process.terminate()
+                process.join(1)
+            results.close()
+            results.join_thread()
+
+    @unittest.skipUnless(
+        post.fcntl is not None and "fork" in multiprocessing.get_all_start_methods(),
+        "requires POSIX process locks and fork")
+    def test_process_crash_releases_operation_lock(self):
+        context = multiprocessing.get_context("fork")
+        owned = context.Event()
+
+        def crash_while_owned():
+            with post._saga_lock(Ledger(self.led.path), "crash-lock"):
+                owned.set()
+                os._exit(17)
+
+        process = context.Process(target=crash_while_owned)
+        process.start()
+        self.assertTrue(owned.wait(2))
+        process.join(3)
+        self.assertEqual(process.exitcode, 17)
+        # No cleanup handler ran in the child; the kernel-released range lock
+        # must nevertheless be immediately acquirable by recovery.
+        with post._saga_lock(self.led, "crash-lock", timeout_s=0.5):
+            pass
+
+    @unittest.skipUnless(post.fcntl is not None, "requires POSIX process locks")
+    def test_operation_lock_contention_is_bounded(self):
+        owned = threading.Event()
+        release = threading.Event()
+
+        def holder():
+            with post._saga_lock(self.led, "busy-lock"):
+                owned.set()
+                release.wait(2)
+
+        thread = threading.Thread(target=holder)
+        thread.start()
+        self.assertTrue(owned.wait(1))
+        started = time.monotonic()
+        try:
+            with self.assertRaises(post.PostError) as raised:
+                with post._saga_lock(self.led, "busy-lock", timeout_s=0.05):
+                    pass
+            self.assertEqual(raised.exception.code, "operation_busy")
+            self.assertLess(time.monotonic() - started, 0.5)
+        finally:
+            release.set()
+            thread.join(2)
+
+    def test_completed_live_retry_is_a_noop_without_a_token(self):
+        cfg = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"kind": "discord", "write_enabled": True,
+                       "channel_id": "123", "bot_user_id": "456",
+                       "token_env": "ABSENT_TABLE_TOKEN"}))
+        first = post.post(cfg, self.led, "hello", send_fn=self.send,
+                          operation_id="live-noop")
+        self.assertTrue(first["ok"])
+        sent = len(self.payloads)
+        with patch.dict(os.environ, {}, clear=True):
+            second = post.post(cfg, self.led, "hello",
+                               operation_id="live-noop")
+        self.assertTrue(second["ok"], second)
+        self.assertTrue(second["resumed"])
+        self.assertEqual(len(self.payloads), sent)
+
+    def test_destination_is_part_of_the_immutable_plan(self):
+        cfg1 = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"kind": "discord", "write_enabled": True,
+                       "channel_id": "123", "bot_user_id": "456"}))
+        cfg2 = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"kind": "discord", "write_enabled": True,
+                       "channel_id": "999", "bot_user_id": "456"}))
+        self.assertNotEqual(
+            post.prepare(cfg1, "hello", operation_id="destination-nonce")[
+                "payloads"][0]["nonce"],
+            post.prepare(cfg2, "hello", operation_id="destination-nonce")[
+                "payloads"][0]["nonce"])
+        post.post(cfg1, self.led, "hello", send_fn=self.send,
+                  operation_id="fixed-destination")
+        sent = len(self.payloads)
+        result = post.post(cfg2, self.led, "hello", send_fn=self.send,
+                           operation_id="fixed-destination")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("operation_mismatch", result["error"])
+        self.assertEqual(len(self.payloads), sent)
+
+    def test_operation_id_cannot_be_reused_for_different_content(self):
+        post.post(self.cfg, self.led, "first", send_fn=self.send,
+                  operation_id="immutable-plan")
+        sent = len(self.payloads)
+        result = post.post(self.cfg, self.led, "different", send_fn=self.send,
+                           operation_id="immutable-plan")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("operation_mismatch", result["error"])
+        self.assertEqual(len(self.payloads), sent)
+
+    def test_corrupt_prepare_is_refused_before_network(self):
+        plan = post.prepare(self.cfg, "hello", operation_id="corrupt-prepare")
+        self.led.append(
+            "qa.post.prepare", operation_id="corrupt-prepare",
+            plan_digest=plan["plan_digest"], content_digest="sha256:wrong",
+            chars=5, chunks=1, source_text="hello",
+            payloads=plan["payloads"], transport=plan["transport"])
+        result = post.post(self.cfg, self.led, "hello", send_fn=self.send,
+                           operation_id="corrupt-prepare")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("operation_mismatch", result["error"])
+        self.assertEqual(self.payloads, [])
+
+    def test_malformed_ledger_is_refused_before_network(self):
+        # State consumers normally omit diagnostic rows. Posting must not: the
+        # unreadable row could be a prepare or receipt for an accepted message.
+        with open(self.led.path, "wb") as stream:
+            stream.write(b'{"type":"qa.post.receipt","operation_id":"lost"')
+        result = post.post(
+            self.cfg, self.led, "hello", send_fn=self.send,
+            operation_id="malformed-ledger")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("malformed_ledger", result["error"])
+        self.assertEqual(self.payloads, [])
+        self.assertFalse(any(
+            row.get("operation_id") == "malformed-ledger"
+            for row in self.led.records()))
+
+    def test_partial_delivery_keeps_intent_and_receipts_but_not_full_beat(self):
+        calls = []
+
+        def sender(_cfg, payload):
+            calls.append(payload)
+            if len(calls) == 1:
+                return {"id": "remote-1", "nonce": payload["nonce"]}
+            raise urllib.error.HTTPError(
+                "https://discord.invalid", 400, "bad request", {},
+                io.BytesIO(b'{}'))
+
+        result = post.post(self.cfg, self.led, "x" * 3000, cue="vesh",
+                           send_fn=sender, operation_id="partial-1",
+                           sleep_fn=lambda _: None, random_fn=lambda: 0)
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["chunks_sent"], 1)
+        rows = [r for r in self.led.records()
+                if r.get("operation_id") == "partial-1"]
+        self.assertEqual(len([r for r in rows if r["type"] == "qa.post.prepare"]), 1)
+        self.assertEqual(len([r for r in rows if r["type"] == "qa.post.receipt"]), 1)
+        self.assertEqual(len([r for r in rows if r["type"] == "qa.post.partial"]), 1)
+        self.assertEqual(len([r for r in rows if r["type"] == "qa.post_failed"]), 1)
+        self.assertFalse(any(r["type"] == "ux.beat" for r in rows))
+        self.assertIn("text", rows[0])
+        self.assertEqual(rows[0]["pair_id"],
+                         "cue-" + hashlib.sha256(b"partial-1").hexdigest()[:24])
+        self.assertEqual(rows[0]["source_text"], "x" * 3000)
+        self.assertEqual(rows[0]["payloads"], calls)
+
+    def test_429_uses_server_retry_after_and_same_nonce(self):
+        payloads, sleeps = [], []
+
+        def sender(_cfg, payload):
+            payloads.append(dict(payload))
+            if len(payloads) == 1:
+                raise urllib.error.HTTPError(
+                    "https://discord.invalid", 429, "rate limited",
+                    {"Retry-After": "9"},
+                    io.BytesIO(b'{"retry_after":1.25}'))
+            return {"id": "remote-ok", "nonce": payload["nonce"]}
+
+        result = post.post(self.cfg, self.led, "hello", send_fn=sender,
+                           operation_id="rate-limit", sleep_fn=sleeps.append,
+                           random_fn=lambda: 0)
+        self.assertTrue(result["ok"])
+        self.assertEqual(sleeps, [1.25])
+        self.assertEqual(payloads[0]["nonce"], payloads[1]["nonce"])
+        self.assertTrue(payloads[0]["enforce_nonce"])
+
+    def test_rate_limit_beyond_budget_refuses_without_early_retry(self):
+        attempts, sleeps = [], []
+
+        def sender(_cfg, payload):
+            attempts.append(payload["nonce"])
+            raise urllib.error.HTTPError(
+                "https://discord.invalid", 429, "rate limited", {},
+                io.BytesIO(b'{"retry_after":999}'))
+
+        result = post.post(self.cfg, self.led, "hello", send_fn=sender,
+                           operation_id="rate-budget", sleep_fn=sleeps.append,
+                           random_fn=lambda: 0, retry_budget_s=2)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("retry_budget_exceeded", result["error"])
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(sleeps, [])
+
+    def test_ambiguous_timeout_retries_with_same_enforced_nonce(self):
+        payloads, sleeps = [], []
+
+        def sender(_cfg, payload):
+            payloads.append(dict(payload))
+            if len(payloads) == 1:
+                raise TimeoutError("socket timed out")
+            return {"id": "same-message", "nonce": payload["nonce"]}
+
+        result = post.post(self.cfg, self.led, "hello", send_fn=sender,
+                           operation_id="timeout-retry", sleep_fn=sleeps.append,
+                           random_fn=lambda: 0)
+        self.assertTrue(result["ok"])
+        self.assertEqual(payloads[0]["nonce"], payloads[1]["nonce"])
+        self.assertEqual(sleeps, [1.0])
+
+    def test_5xx_retries_with_same_enforced_nonce(self):
+        payloads, sleeps = [], []
+
+        def sender(_cfg, payload):
+            payloads.append(dict(payload))
+            if len(payloads) == 1:
+                raise urllib.error.HTTPError(
+                    "https://discord.invalid", 503, "unavailable", {},
+                    io.BytesIO(b'{}'))
+            return {"id": "server-recovered", "nonce": payload["nonce"]}
+
+        result = post.post(self.cfg, self.led, "hello", send_fn=sender,
+                           operation_id="server-retry", sleep_fn=sleeps.append,
+                           random_fn=lambda: 0)
+        self.assertTrue(result["ok"])
+        self.assertEqual(sleeps, [1.0])
+        self.assertEqual(payloads[0]["nonce"], payloads[1]["nonce"])
+        self.assertTrue(payloads[1]["enforce_nonce"])
+
+    def test_retry_budget_is_global_across_all_chunks(self):
+        attempts, sleeps = {}, []
+
+        def sender(_cfg, payload):
+            nonce = payload["nonce"]
+            attempts[nonce] = attempts.get(nonce, 0) + 1
+            if attempts[nonce] == 1:
+                raise urllib.error.HTTPError(
+                    "https://discord.invalid", 429, "rate limited", {},
+                    io.BytesIO(b'{"retry_after":1.1}'))
+            return {"id": f"message-{len(attempts)}", "nonce": nonce}
+
+        result = post.post(
+            self.cfg, self.led, "x" * 3000, send_fn=sender,
+            operation_id="global-budget", sleep_fn=sleeps.append,
+            random_fn=lambda: 0, retry_budget_s=2)
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["chunks_sent"], 1)
+        self.assertEqual(sleeps, [1.1])
+
+    def test_nonretryable_400_is_not_retried(self):
+        attempts = []
+
+        def sender(_cfg, payload):
+            attempts.append(payload)
+            raise urllib.error.HTTPError(
+                "https://discord.invalid", 400, "bad request", {},
+                io.BytesIO(b'{}'))
+
+        result = post.post(self.cfg, self.led, "hello", send_fn=sender,
+                           operation_id="bad-request", sleep_fn=lambda _: None)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(len(attempts), 1)
+
+    def test_bare_or_unbound_sender_receipt_is_not_success_or_retried(self):
+        attempts = []
+
+        def sender(_cfg, payload):
+            attempts.append(payload)
+            return "unbound-message-id"
+
+        result = post.post(
+            self.cfg, self.led, "hello", send_fn=sender,
+            operation_id="unbound-receipt", sleep_fn=lambda _: None)
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["delivery_uncertain"])
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(self.led.read(etype="qa.post.receipt"), [])
+        self.assertEqual(self.led.read(etype="qa.post.commit"), [])
+
+    def test_crash_after_remote_send_reconciles_by_nonce_without_duplicate(self):
+        class CrashReceiptLedger(Ledger):
+            def __init__(self, path):
+                super().__init__(path)
+                self.crashed = False
+
+            def append(self, etype, **fields):
+                if etype == "qa.post.receipt" and not self.crashed:
+                    self.crashed = True
+                    raise RuntimeError("crash after remote send")
+                return super().append(etype, **fields)
+
+        crash_ledger = CrashReceiptLedger(self.led.path)
+        remote = []
+
+        def first_sender(_cfg, payload):
+            remote.append({"id": "remote-once", "nonce": payload["nonce"],
+                           "content": payload["content"]})
+            return {"id": "remote-once", "nonce": payload["nonce"]}
+
+        with self.assertRaises(RuntimeError):
+            post.post(self.cfg, crash_ledger, "hello", send_fn=first_sender,
+                      operation_id="receipt-crash")
+        second_sends = []
+        result = post.post(
+            self.cfg, Ledger(self.led.path), "hello",
+            send_fn=lambda _cfg, payload: second_sends.append(payload),
+            history_fn=lambda _cfg, _since: {"complete": True,
+                                             "messages": remote},
+            operation_id="receipt-crash")
+        self.assertTrue(result["ok"])
+        self.assertEqual(second_sends, [])
+        self.assertEqual(result["message_ids"], ["remote-once"])
+        receipt = Ledger(self.led.path).read(etype="qa.post.receipt")[0]
+        self.assertTrue(receipt["reconciled"])
+
+    def test_crash_after_receipts_resumes_finalization_without_resend(self):
+        class CrashBeatLedger(Ledger):
+            def __init__(self, path):
+                super().__init__(path)
+                self.crashed = False
+
+            def append(self, etype, **fields):
+                if etype == "ux.beat" and not self.crashed:
+                    self.crashed = True
+                    raise RuntimeError("crash before finalization")
+                return super().append(etype, **fields)
+
+        crash_ledger = CrashBeatLedger(self.led.path)
+        with self.assertRaises(RuntimeError):
+            post.post(self.cfg, crash_ledger, "hello", send_fn=self.send,
+                      operation_id="finalize-crash")
+        sent = len(self.payloads)
+        result = post.post(self.cfg, Ledger(self.led.path), "hello",
+                           send_fn=self.send, operation_id="finalize-crash")
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(self.payloads), sent)
+        rows = [r for r in Ledger(self.led.path).records()
+                if r.get("operation_id") == "finalize-crash"]
+        self.assertEqual(rows[-1]["type"], "qa.post.commit")
+
+    def test_crash_after_each_durable_saga_step_resumes_once(self):
+        steps = [
+            "qa.post.prepare", "qa.post.receipt", "ux.beat", "event",
+            "qa.command", "out.open", "qa.post", "qa.post.commit",
+        ]
+        for step in steps:
+            with self.subTest(step=step):
+                path = os.path.join(self.dir, step.replace(".", "-") + ".jsonl")
+
+                class CrashAfterLedger(Ledger):
+                    def __init__(self, ledger_path):
+                        super().__init__(ledger_path)
+                        self.crashed = False
+
+                    def append(inner_self, etype, **fields):
+                        row = super(CrashAfterLedger, inner_self).append(
+                            etype, **fields)
+                        if etype == step and not inner_self.crashed:
+                            inner_self.crashed = True
+                            raise RuntimeError(f"crash after {step}")
+                        return row
+
+                payloads = []
+
+                def sender(_cfg, payload):
+                    payloads.append(dict(payload))
+                    return {"id": "only-message", "nonce": payload["nonce"]}
+
+                with self.assertRaises(RuntimeError):
+                    post.post(
+                        self.cfg, CrashAfterLedger(path), "Vesh?", cue="vesh",
+                        send_fn=sender, operation_id=f"crash-{step}")
+                result = post.post(
+                    self.cfg, Ledger(path), "Vesh?", cue="vesh",
+                    send_fn=sender,
+                    history_fn=lambda *_: {"complete": True, "messages": []},
+                    operation_id=f"crash-{step}")
+                self.assertTrue(result["ok"])
+                self.assertEqual(len(payloads), 1)
+                rows = [row for row in Ledger(path).records()
+                        if row.get("operation_id") == f"crash-{step}"]
+                self.assertEqual(len([row for row in rows
+                                      if row["type"] == step]), 1)
+                self.assertEqual(len([row for row in rows
+                                      if row["type"] == "qa.post.commit"]), 1)
+
+    def test_corrupt_terminal_or_duplicate_derived_state_is_refused(self):
+        class CrashAfterType(Ledger):
+            def __init__(self, path, target):
+                super().__init__(path)
+                self.target = target
+                self.crashed = False
+
+            def append(self, etype, **fields):
+                row = super().append(etype, **fields)
+                if etype == self.target and not self.crashed:
+                    self.crashed = True
+                    raise RuntimeError(f"crash after {etype}")
+                return row
+
+        commit_path = os.path.join(self.dir, "bad-commit.jsonl")
+        with self.assertRaises(RuntimeError):
+            post.post(
+                self.cfg, CrashAfterType(commit_path, "qa.post"), "hello",
+                send_fn=self.send, operation_id="bad-commit")
+        Ledger(commit_path).append(
+            "qa.post.commit", operation_id="bad-commit", chunks=1,
+            message_ids=["not-the-receipted-message"])
+        sent = len(self.payloads)
+        result = post.post(
+            self.cfg, Ledger(commit_path), "hello", send_fn=self.send,
+            operation_id="bad-commit")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("commit record disagrees", result["error"])
+        self.assertEqual(len(self.payloads), sent)
+
+        pair_path = os.path.join(self.dir, "duplicate-pair.jsonl")
+        with self.assertRaises(RuntimeError):
+            post.post(
+                self.cfg, CrashAfterType(pair_path, "out.open"), "Vesh?",
+                cue="vesh", send_fn=self.send, operation_id="duplicate-pair")
+        Ledger(pair_path).append(
+            "out.open", operation_id="duplicate-pair", pair="cue",
+            id="cue-wrong", seat="vesh", detail="wrong", beat=1)
+        sent = len(self.payloads)
+        result = post.post(
+            self.cfg, Ledger(pair_path), "Vesh?", cue="vesh",
+            send_fn=self.send, operation_id="duplicate-pair")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("duplicate out.open", result["error"])
+        self.assertEqual(len(self.payloads), sent)
+
+    def test_commit_without_all_preceding_final_state_is_not_success(self):
+        plan = post.prepare(self.cfg, "hello", operation_id="bare-commit")
+        self.led.append(
+            "qa.post.prepare", operation_id="bare-commit",
+            plan_digest=plan["plan_digest"],
+            content_digest=plan["content_digest"], chars=5, chunks=1,
+            source_text="hello", text="hello", payloads=plan["payloads"],
+            transport=plan["transport"])
+        self.led.append(
+            "qa.post.receipt", operation_id="bare-commit", chunk_index=0,
+            message_id="remote-1", nonce=plan["payloads"][0]["nonce"])
+        self.led.append(
+            "qa.post.commit", operation_id="bare-commit", chunks=1,
+            message_ids=["remote-1"])
+        called = []
+        result = post.post(
+            self.cfg, self.led, "hello",
+            send_fn=lambda *_: called.append(True), operation_id="bare-commit")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("requires exactly one ux.beat", result["error"])
+        self.assertEqual(called, [])
+
+    def test_partial_operation_reconciles_coverage_then_sends_only_missing(self):
+        first_calls = []
+
+        def first(_cfg, payload):
+            first_calls.append(payload)
+            if len(first_calls) == 1:
+                return {"id": "first", "nonce": payload["nonce"]}
+            raise urllib.error.HTTPError(
+                "https://discord.invalid", 400, "bad", {}, io.BytesIO(b'{}'))
+
+        partial = post.post(self.cfg, self.led, "x" * 3000, send_fn=first,
+                            operation_id="partial-resume")
+        self.assertEqual(partial["status"], "partial")
+        resumed_payloads = []
+
+        def second(_cfg, payload):
+            resumed_payloads.append(payload)
+            return {"id": "second", "nonce": payload["nonce"]}
+
+        result = post.post(
+            self.cfg, self.led, "x" * 3000, send_fn=second,
+            history_fn=lambda *_: {"complete": True, "messages": []},
+            operation_id="partial-resume")
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(resumed_payloads), 1)
+        self.assertEqual(result["message_ids"], ["first", "second"])
+
+    def test_partial_operation_can_resume_from_ledger_plan_alone(self):
+        calls = []
+
+        def first(_cfg, payload):
+            calls.append(payload)
+            if len(calls) == 1:
+                return {"id": "first", "nonce": payload["nonce"]}
+            raise urllib.error.HTTPError(
+                "https://discord.invalid", 400, "bad", {}, io.BytesIO(b'{}'))
+
+        partial = post.post(
+            self.cfg, self.led, "Vesh, " + "x" * 3000, cue="vesh",
+            send_fn=first, operation_id="ledger-resume")
+        self.assertEqual(partial["status"], "partial")
+        resumed_payloads = []
+
+        def second(_cfg, payload):
+            resumed_payloads.append(payload)
+            return {"id": f"second-{len(resumed_payloads)}",
+                    "nonce": payload["nonce"]}
+
+        result = post.resume(
+            self.cfg, self.led, "ledger-resume", send_fn=second,
+            history_fn=lambda *_: {"complete": True, "messages": []})
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(len(resumed_payloads), 2)
+        self.assertEqual(result["message_ids"],
+                         ["first", "second-1", "second-2"])
+
+    def test_resume_refuses_without_exactly_one_durable_plan(self):
+        result = post.resume(self.cfg, self.led, "not-prepared",
+                             send_fn=self.send)
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("recovery_plan_unavailable", result["error"])
+        self.assertEqual(self.payloads, [])
+
+    def test_incomplete_history_refuses_unreceipted_retry(self):
+        class CrashReceiptLedger(Ledger):
+            def append(self, etype, **fields):
+                if etype == "qa.post.receipt":
+                    raise RuntimeError("receipt crash")
+                return super().append(etype, **fields)
+
+        with self.assertRaises(RuntimeError):
+            post.post(self.cfg, CrashReceiptLedger(self.led.path), "hello",
+                      send_fn=self.send, operation_id="history-gap")
+        sent = len(self.payloads)
+        result = post.post(
+            self.cfg, Ledger(self.led.path), "hello", send_fn=self.send,
+            history_fn=lambda *_: {"complete": False, "messages": []},
+            operation_id="history-gap")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("reconciliation_incomplete", result["error"])
+        self.assertEqual(len(self.payloads), sent)
+
+    def test_duplicate_remote_nonce_is_ambiguous_and_refused(self):
+        class CrashReceiptLedger(Ledger):
+            def append(self, etype, **fields):
+                if etype == "qa.post.receipt":
+                    raise RuntimeError("receipt crash")
+                return super().append(etype, **fields)
+
+        captured = []
+
+        def sender(_cfg, payload):
+            captured.append(payload)
+            return {"id": "r1", "nonce": payload["nonce"]}
+
+        with self.assertRaises(RuntimeError):
+            post.post(self.cfg, CrashReceiptLedger(self.led.path), "hello",
+                      send_fn=sender, operation_id="duplicate-history")
+        nonce, content = captured[0]["nonce"], captured[0]["content"]
+        history = {"complete": True, "messages": [
+            {"id": "r1", "nonce": nonce, "content": content},
+            {"id": "r2", "nonce": nonce, "content": content},
+        ]}
+        result = post.post(
+            self.cfg, Ledger(self.led.path), "hello", send_fn=self.send,
+            history_fn=lambda *_: history, operation_id="duplicate-history")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("ambiguous_history", result["error"])
+
+    def test_reconciliation_authenticates_author_and_content(self):
+        cfg = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"write_enabled": True, "bot_user_id": "999"}))
+
+        class CrashReceiptLedger(Ledger):
+            def append(self, etype, **fields):
+                if etype == "qa.post.receipt":
+                    raise RuntimeError("receipt crash")
+                return super().append(etype, **fields)
+
+        remote = []
+
+        def first(_cfg, payload):
+            remote.append(dict(payload))
+            return {"id": "remote", "nonce": payload["nonce"]}
+
+        with self.assertRaises(RuntimeError):
+            post.post(cfg, CrashReceiptLedger(self.led.path), "hello",
+                      send_fn=first, operation_id="authenticated-history")
+        payload = remote[0]
+        second_sends = []
+        wrong_author = {
+            "id": "spoof", "nonce": payload["nonce"],
+            "content": payload["content"], "author": {"id": "123"},
+        }
+        result = post.post(
+            cfg, Ledger(self.led.path), "hello",
+            send_fn=lambda _cfg, item: second_sends.append(item) or {
+                "id": "actual", "nonce": item["nonce"]},
+            history_fn=lambda *_: {"complete": True,
+                                   "messages": [wrong_author]},
+            operation_id="authenticated-history")
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(second_sends), 1)
+
+        mismatch_path = os.path.join(self.dir, "content-mismatch.jsonl")
+        remote.clear()
+        with self.assertRaises(RuntimeError):
+            post.post(cfg, CrashReceiptLedger(mismatch_path), "hello",
+                      send_fn=first, operation_id="content-history")
+        payload = remote[0]
+        mismatch = {
+            "id": "remote", "nonce": payload["nonce"], "content": "changed",
+            "author": {"id": "999"},
+        }
+        result = post.post(
+            cfg, Ledger(mismatch_path), "hello", send_fn=self.send,
+            history_fn=lambda *_: {"complete": True, "messages": [mismatch]},
+            operation_id="content-history")
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("reconcile_content_mismatch", result["error"])
+
+    def test_builtin_history_pages_until_prepare_time_is_covered(self):
+        cfg = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"write_enabled": True, "channel_id": "123",
+                       "bot_user_id": "999", "token_env": "TEST_TABLE_TOKEN"}))
+        pages = [
+            [
+                {"id": "1533052169748480000",
+                 "timestamp": "2026-08-01T10:02:00Z"},
+                {"id": "1533051918090240000",
+                 "timestamp": "2026-08-01T10:01:00Z"},
+            ],
+            [{"id": "1533051414773760000",
+              "timestamp": "2026-08-01T09:59:00Z"}],
+        ]
+        requests = []
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+        def fake_urlopen(request, timeout):
+            requests.append((request, timeout))
+            return Response(json.dumps(pages.pop(0)).encode("utf-8"))
+
+        since = post._parse_timestamp("2026-08-01T10:00:00Z")
+        with patch.dict(os.environ, {"TEST_TABLE_TOKEN": "not-a-real-token"}), \
+                patch("tablekit.post.urllib.request.urlopen", fake_urlopen):
+            result = post.discord_history_since(cfg, since)
+        self.assertTrue(result["complete"])
+        self.assertEqual([item["id"] for item in result["messages"]],
+                         ["1533052169748480000", "1533051918090240000",
+                          "1533051414773760000"])
+        self.assertEqual(len(requests), 2)
+        self.assertNotIn("before=", requests[0][0].full_url)
+        self.assertIn("before=1533051918090240000", requests[1][0].full_url)
+        self.assertEqual(requests[0][1], 20)
+
+    def test_builtin_history_rejects_malformed_coverage_evidence(self):
+        cfg = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"write_enabled": True, "channel_id": "123",
+                       "bot_user_id": "999", "token_env": "TEST_TABLE_TOKEN"}))
+        # An old timestamp injected ahead of a newer message used to make the
+        # page look as though it covered the prepare boundary and permit resend.
+        malformed = [
+            {"id": "1533052169748480000",
+             "timestamp": "2026-08-01T09:59:00Z"},
+            {"id": "1533051918090240000",
+             "timestamp": "2026-08-01T10:02:00Z"},
+        ]
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+        def fake_urlopen(_request, timeout):
+            del timeout
+            return Response(json.dumps(malformed).encode("utf-8"))
+
+        since = post._parse_timestamp("2026-08-01T10:00:00Z")
+        with patch.dict(os.environ, {"TEST_TABLE_TOKEN": "not-a-real-token"}), \
+                patch("tablekit.post.urllib.request.urlopen", fake_urlopen), \
+                self.assertRaises(post.PostError) as raised:
+            post.discord_history_since(cfg, since)
+        self.assertEqual(raised.exception.code, "invalid_history")
+
+    def test_discord_send_serializes_safety_fields(self):
+        cfg = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"write_enabled": True, "channel_id": "123",
+                       "bot_user_id": "999",
+                       "token_env": "TEST_TABLE_TOKEN"}))
+        payload = post.prepare(cfg, "@everyone hi", operation_id="wire-body")[
+            "payloads"][0]
+        captured = []
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+        def fake_urlopen(request, timeout):
+            captured.append((request, timeout))
+            return Response(json.dumps({
+                "id": "123456789", "nonce": payload["nonce"],
+                "content": payload["content"], "channel_id": "123",
+                "author": {"id": "999"},
+            }).encode())
+
+        with patch.dict(os.environ, {"TEST_TABLE_TOKEN": "not-a-real-token"}), \
+                patch("tablekit.post.urllib.request.urlopen", fake_urlopen):
+            result = post.discord_send(cfg, payload)
+        self.assertEqual(result["id"], "123456789")
+        body = json.loads(captured[0][0].data)
+        self.assertEqual(body, payload)
+        self.assertEqual(body["allowed_mentions"],
+                         {"parse": [], "replied_user": False})
+        self.assertTrue(body["enforce_nonce"])
+
+    def test_discord_success_must_bind_id_nonce_content_author_and_channel(self):
+        cfg = TableConfig(dict(
+            CFG, data_dir=self.dir,
+            transport={"write_enabled": True, "channel_id": "123",
+                       "bot_user_id": "999",
+                       "token_env": "TEST_TABLE_TOKEN"}))
+        payload = post.prepare(cfg, "hello", operation_id="bound-response")[
+            "payloads"][0]
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+        response = {
+            "id": "123456789", "nonce": payload["nonce"],
+            "content": payload["content"], "channel_id": "123",
+            "author": {"id": "not-the-configured-bot"},
+        }
+
+        def fake_urlopen(_request, timeout):
+            del timeout
+            return Response(json.dumps(response).encode())
+
+        with patch.dict(os.environ, {"TEST_TABLE_TOKEN": "not-a-real-token"}), \
+                patch("tablekit.post.urllib.request.urlopen", fake_urlopen), \
+                self.assertRaises(post.DeliveryError) as raised:
+            post.discord_send(cfg, payload)
+        self.assertEqual(raised.exception.code, "author_mismatch")
+        self.assertFalse(raised.exception.retryable)
+        self.assertTrue(raised.exception.delivery_uncertain)
 
 
 class TestIngest(Base):

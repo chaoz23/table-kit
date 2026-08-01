@@ -65,6 +65,13 @@ SCHEMA = {
     "act":   ("actor", "text"),
     "event": ("text",),
     # --- qa: does the machinery work ----------------------------------
+    "qa.post.prepare": ("operation_id", "plan_digest", "content_digest",
+                        "chars", "chunks", "source_text", "payloads",
+                        "transport"),
+    "qa.post.receipt": ("operation_id", "chunk_index", "message_id", "nonce"),
+    "qa.post.partial": ("operation_id", "chunks_sent", "chunks_planned", "error"),
+    "qa.post.commit": ("operation_id", "chunks"),
+    "qa.post.reconcile": ("operation_id", "state"),
     "qa.post":       ("ok", "chars", "chunks"),
     "qa.post_failed": ("error",),
     "qa.inbound":    ("seat", "chars"),
@@ -144,6 +151,16 @@ def _boolean(value, field, etype):
         raise SchemaError(f"{etype}: {field} must be a boolean")
 
 
+def _nonempty_array(value, field, etype):
+    if not isinstance(value, list) or not value:
+        raise SchemaError(f"{etype}: {field} must be a non-empty array")
+
+
+def _object(value, field, etype):
+    if not isinstance(value, dict):
+        raise SchemaError(f"{etype}: {field} must be an object")
+
+
 def _json_value(value, path="event"):
     """Reject non-JSON and non-finite extension data before any write."""
     if value is None or isinstance(value, (bool, str, int)):
@@ -173,6 +190,23 @@ FIELD_VALIDATORS = {
     "turn": {"actor": _string},
     "act": {"actor": _string, "text": _string},
     "event": {"text": _string},
+    "qa.post.prepare": {
+        "operation_id": _string, "plan_digest": _string,
+        "content_digest": _string, "chars": _integer,
+        "chunks": lambda v, f, t: _integer(v, f, t, 1),
+        "source_text": _string, "payloads": _nonempty_array,
+        "transport": _object},
+    "qa.post.receipt": {
+        "operation_id": _string, "chunk_index": _integer,
+        "message_id": _string, "nonce": _string},
+    "qa.post.partial": {
+        "operation_id": _string, "chunks_sent": _integer,
+        "chunks_planned": lambda v, f, t: _integer(v, f, t, 1),
+        "error": _string},
+    "qa.post.commit": {
+        "operation_id": _string,
+        "chunks": lambda v, f, t: _integer(v, f, t, 1)},
+    "qa.post.reconcile": {"operation_id": _string, "state": _string},
     "qa.post": {"ok": _boolean,
         "chars": _integer,
         "chunks": lambda v, f, t: _integer(v, f, t, 1)},
@@ -231,6 +265,9 @@ def validate(rec):
         raise SchemaError(f"{etype}: missing required key(s) {', '.join(missing)}")
     for field, validator in FIELD_VALIDATORS[etype].items():
         validator(rec[field], field, etype)
+    if etype == "qa.post.prepare" and len(rec["payloads"]) != rec["chunks"]:
+        raise SchemaError(
+            "qa.post.prepare: payload count must equal the chunk count")
     if etype in ("out.open", "out.close") and rec["pair"] not in PAIR_KINDS:
         raise SchemaError(
             f"unknown pair kind {rec['pair']!r}; known: {', '.join(sorted(PAIR_KINDS))}")

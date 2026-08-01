@@ -14,6 +14,12 @@ into something you can learn from — is what this repo is.
 It is an **example, not a framework**. Small enough to read in one sitting, and
 it expects to be edited.
 
+Discord writes are **disabled by default**. The outbound helper validates and
+prepares an immutable operation, denies unintended mentions, durably receipts
+every delivered chunk, and commits only complete delivery. It remains off
+until the operator explicitly consents and the production gates in
+[docs/TRANSPORT.md](docs/TRANSPORT.md) are satisfied.
+
 ```bash
 pip install tablekit
 tablekit init                      # writes table.json
@@ -194,5 +200,12 @@ no library.
 Treat it as table-private data and as evidence, not a cryptographically trusted
 audit log; the exact boundary is documented in
 [DATA_SAFETY.md](docs/DATA_SAFETY.md).
+
+For outbound use, call `post.prepare()` first when inspection is enough. A live
+`post.post()` requires `transport.write_enabled=true`; supply and persist an
+`operation_id`, and treat every status other than `committed` as not fully
+delivered. `post.resume()` can recover the complete bounded plan from the
+ledger after interruption. The exact retry/reconciliation contract is in
+[TRANSPORT.md](docs/TRANSPORT.md).
 
 MIT.
