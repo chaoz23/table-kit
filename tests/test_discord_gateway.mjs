@@ -138,7 +138,7 @@ test('close policy distinguishes resume, fresh identify, and fatal stops', () =>
   }
 });
 
-test('Identify requests content once and READY supplies authoritative bot identity', () => {
+test('READY identity suppresses already-receipted outbound bot echoes', () => {
   const h = harness();
   const socket = h.sockets[0];
   hello(socket);

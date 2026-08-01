@@ -279,9 +279,13 @@ The source-native principal ID and role evidence are preserved on every
 receipt. They are not yet an authoritative host-owned identity mapping; that
 suite-wide contract belongs to `PORT-002`/`PORT-003`.
 
-The GM's own posts arrive back through the listener. They receive the same
-durable, deduplicated receipt and an `ignored: gm_echo` disposition, but do not
-become a second beat or player line.
+Messages authored by the bot identity established in `READY` are filtered by
+the Gateway adapter before stdout, so a table-kit post cannot become a second
+inbound beat or player line. Table-kit-created posts already have their durable
+native message ID in the posting saga's `qa.post.receipt`; the listener does
+not fabricate a second `qa.inbound`/`gm_echo` receipt. A different process that
+shares the bot token is outside this one-writer contract and its posts are not
+captured by this adapter.
 
 ## 10. One result, one obligation
 
