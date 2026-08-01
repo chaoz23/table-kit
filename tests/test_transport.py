@@ -1578,13 +1578,21 @@ class TestIngestEmits(Base):
 
 
 class TestEngineTap(Base):
+    def assert_sync_error(self, code, state, ledger=None):
+        with self.assertRaises(engine.EngineSyncError) as caught:
+            engine.tap(ledger or self.led, state)
+        self.assertEqual(caught.exception.code, code)
+        return caught.exception
+
     def test_tap_writes_new_log_lines_once(self):
         state = {"log": ["[round 1] Rowan hits", "[round 1] Goblin falls"],
                  "log_len": 2, "turn": "u1", "units": {"u1": "Rowan [party] 8/10"}}
-        engine.tap(self.led, state)
+        written = engine.tap(self.led, state)
         self.assertEqual(len(self.led.read(etype="act")), 2)
+        self.assertEqual([r["type"] for r in written], ["act", "act", "turn"])
+        self.assertEqual(len(self.led.read(etype="qc.mark")), 1)
         # Idempotent: same state again writes nothing.
-        engine.tap(self.led, state)
+        self.assertEqual(engine.tap(self.led, state), [])
         self.assertEqual(len(self.led.read(etype="act")), 2)
 
     def test_tap_appends_only_the_delta(self):
@@ -1607,6 +1615,188 @@ class TestEngineTap(Base):
         engine.tap(self.led, {"log": ["a", "b"], "log_len": 2})
         fresh = Ledger(self.led.path)
         self.assertEqual(engine.synced_through(fresh), 2)
+
+    def test_ten_entry_source_with_only_four_tail_entries_refuses_without_advancing(self):
+        state = {"log_tail": ["g", "h", "i", "j"], "log_len": 10}
+        err = self.assert_sync_error("source_gap", state)
+        self.assertEqual(err.context["first_missing"], 1)
+        self.assertEqual(engine.synced_through(self.led), 0)
+        self.assertEqual(self.led.read(etype="act"), [])
+        self.assertEqual(self.led.read(etype="qc.mark"), [])
+
+    def test_tail_must_begin_at_the_next_expected_entry(self):
+        engine.tap(self.led, {"log": ["a", "b", "c", "d"], "log_len": 4})
+        self.assert_sync_error(
+            "source_gap",
+            {"log_tail": ["g", "h", "i", "j"], "log_len": 10},
+        )
+        self.assertEqual(engine.synced_through(self.led), 4)
+        engine.tap(self.led, {"log": list("abcdefghij"), "log_len": 10})
+        self.assertEqual(engine.synced_through(self.led), 10)
+        self.assertEqual([r["text"] for r in self.led.read(etype="act")],
+                         list("abcdefghij"))
+
+    def test_contiguous_tail_can_resume_after_restart(self):
+        engine.tap(self.led, {"log": ["a", "b"], "log_len": 2})
+        fresh = Ledger(self.led.path)
+        written = engine.tap(fresh, {"log_tail": ["c", "d"], "log_len": 4})
+        self.assertEqual([r["engine_log_index"] for r in written
+                          if "engine_log_index" in r], [3, 4])
+        self.assertEqual(engine.synced_through(fresh), 4)
+        self.assertEqual(engine.tap(fresh, {"log_tail": ["c", "d"],
+                                            "log_len": 4}), [])
+
+    def test_paginated_catch_up_advances_only_to_each_committed_page(self):
+        engine.tap(self.led, {"log_tail": ["a", "b"], "log_len": 2})
+        self.assertEqual(engine.synced_through(self.led), 2)
+        engine.tap(self.led, {"log_tail": ["c", "d"], "log_len": 4})
+        self.assertEqual(engine.synced_through(self.led), 4)
+        engine.tap(self.led, {"log_tail": ["e"], "log_len": 5})
+        self.assertEqual(engine.synced_through(self.led), 5)
+        self.assertEqual([r["text"] for r in self.led.read(etype="act")],
+                         list("abcde"))
+
+    def test_reordered_history_is_typed_and_does_not_advance(self):
+        engine.tap(self.led, {"log": ["a", "b", "c"], "log_len": 3})
+        self.assert_sync_error(
+            "source_reordered", {"log": ["a", "c", "b"], "log_len": 3})
+        self.assertEqual(engine.synced_through(self.led), 3)
+
+    def test_forked_history_is_typed_and_does_not_advance(self):
+        engine.tap(self.led, {"log": ["a", "b"], "log_len": 2})
+        self.assert_sync_error("source_fork", {"log": ["a", "x"], "log_len": 2})
+        self.assertEqual(engine.synced_through(self.led), 2)
+
+    def test_source_id_change_is_a_fork_even_when_text_matches(self):
+        state = {"log": ["a"], "log_len": 1, "source_id": "match-a"}
+        engine.tap(self.led, state)
+        self.assert_sync_error(
+            "source_fork",
+            {"log": ["a"], "log_len": 1, "source_id": "match-b"},
+        )
+
+    def test_reset_and_cursor_ahead_are_distinct_typed_refusals(self):
+        engine.tap(self.led, {"log": ["a", "b"], "log_len": 2})
+        self.assert_sync_error("source_reset", {"log": [], "log_len": 0})
+        self.assert_sync_error("cursor_ahead", {"log": ["a"], "log_len": 1})
+        self.assertEqual(engine.synced_through(self.led), 2)
+
+    def test_empty_tail_cannot_claim_a_duplicate_cursor(self):
+        engine.tap(self.led, {"log": ["a"], "log_len": 1})
+        self.assert_sync_error("source_unverifiable", {"log_tail": [], "log_len": 1})
+
+    def test_durable_entry_recovers_after_cursor_mark_write_fails(self):
+        class FailFirstMark(Ledger):
+            failed = False
+
+            def append(inner_self, etype, **fields):
+                if etype == "qc.mark" and not inner_self.failed:
+                    inner_self.failed = True
+                    raise OSError("simulated mark write failure")
+                return super(FailFirstMark, inner_self).append(etype, **fields)
+
+        failing = FailFirstMark(self.led.path)
+        with self.assertRaises(OSError):
+            engine.tap(failing, {"log": ["a"], "log_len": 1})
+        fresh = Ledger(self.led.path)
+        self.assertEqual(engine.synced_through(fresh), 1)
+        self.assertEqual(len(fresh.read(etype="act")), 1)
+        recovered = engine.tap(fresh, {"log": ["a"], "log_len": 1})
+        self.assertEqual(recovered, [])
+        self.assertEqual(len(fresh.read(etype="act")), 1)
+        self.assertEqual(len(fresh.read(etype="qc.mark")), 1)
+
+    def test_failure_before_first_event_does_not_advance_cursor(self):
+        class FailFirstEvent(Ledger):
+            failed = False
+
+            def append(inner_self, etype, **fields):
+                if etype in ("act", "event") and not inner_self.failed:
+                    inner_self.failed = True
+                    raise OSError("simulated event write failure")
+                return super(FailFirstEvent, inner_self).append(etype, **fields)
+
+        failing = FailFirstEvent(self.led.path)
+        with self.assertRaises(OSError):
+            engine.tap(failing, {"log": ["a", "b"], "log_len": 2})
+        fresh = Ledger(self.led.path)
+        self.assertEqual(engine.synced_through(fresh), 0)
+        engine.tap(fresh, {"log": ["a", "b"], "log_len": 2})
+        self.assertEqual(engine.synced_through(fresh), 2)
+
+    def test_legacy_length_only_cursor_refuses_instead_of_guessing(self):
+        self.led.append("qc.mark", narrated_through=0, engine_log_len=10)
+        self.assert_sync_error(
+            "legacy_cursor_unverifiable",
+            {"log_tail": ["g", "h", "i", "j"], "log_len": 10},
+        )
+
+    def test_narration_advances_only_with_a_correlated_acknowledgment(self):
+        from tablekit import detector
+
+        written = engine.tap(self.led, {"log": ["a", "b"], "log_len": 2})
+        events = [r for r in written if "engine_log_index" in r]
+        self.assertEqual(engine.narrated_through(self.led), 0)
+        # A scalar supplied by the source is not narration evidence.
+        found = [f for f in detector.check(
+            self.led, self.cfg, state={"log_len": 2, "narrated_through": 2})
+            if f["check"] == "unnarrated"]
+        self.assertIn("2 engine event(s)", found[0]["detail"])
+
+        ack = engine.acknowledge_narration(self.led, events[0], evidence="discord:m1")
+        self.assertEqual(ack[0]["ack_engine_log_index"], 1)
+        self.assertEqual(engine.narrated_through(self.led), 1)
+        self.assertEqual(engine.acknowledge_narration(self.led, events[0]), [])
+        found = [f for f in detector.check(self.led, self.cfg, state={"log_len": 2})
+                 if f["check"] == "unnarrated"]
+        self.assertIn("1 engine event(s)", found[0]["detail"])
+
+        engine.acknowledge_narration(self.led, events[1])
+        self.assertEqual(engine.narrated_through(Ledger(self.led.path)), 2)
+        self.assertEqual([f for f in detector.check(
+            self.led, self.cfg, state={"log_len": 2})
+            if f["check"] == "unnarrated"], [])
+
+    def test_out_of_order_narration_ack_does_not_cover_an_unacknowledged_gap(self):
+        written = engine.tap(self.led, {"log": ["a", "b"], "log_len": 2})
+        events = [r for r in written if "engine_log_index" in r]
+        ack = engine.acknowledge_narration(self.led, events[1])
+        self.assertEqual(ack[0]["narrated_through"], 0)
+        self.assertEqual(engine.narrated_through(self.led), 0)
+        ack = engine.acknowledge_narration(self.led, events[0])
+        self.assertEqual(ack[0]["narrated_through"], 2)
+        self.assertEqual(engine.narrated_through(self.led), 2)
+
+    def test_source_identity_can_be_adopted_at_an_existing_cursor(self):
+        engine.tap(self.led, {"log": ["a"], "log_len": 1, "turn": "u1",
+                              "units": {"u1": "Rowan [party] 8/10"}})
+        self.assertEqual(engine.tap(
+            self.led, {"log": ["a"], "log_len": 1, "source_id": "match-a",
+                       "turn": "u1", "units": {"u1": "Rowan [party] 8/10"}}), [])
+        self.assertEqual(len(self.led.read(etype="turn")), 1)
+        self.assert_sync_error(
+            "source_unverifiable", {"log": ["a"], "log_len": 1})
+        self.assert_sync_error(
+            "source_fork",
+            {"log": ["a"], "log_len": 1, "source_id": "match-b"},
+        )
+
+    def test_mismatched_narration_acknowledgment_cannot_advance(self):
+        written = engine.tap(self.led, {"log": ["a"], "log_len": 1})
+        event = next(r for r in written if "engine_log_index" in r)
+        forged = dict(event, engine_log_fingerprint="0" * 64)
+        with self.assertRaises(engine.EngineSyncError) as caught:
+            engine.acknowledge_narration(self.led, forged)
+        self.assertEqual(caught.exception.code, "narration_ack_mismatch")
+        self.assertEqual(engine.narrated_through(self.led), 0)
+
+    def test_narration_ack_rejects_non_integer_index(self):
+        written = engine.tap(self.led, {"log": ["a"], "log_len": 1})
+        event = next(r for r in written if "engine_log_index" in r)
+        with self.assertRaises(engine.EngineSyncError) as caught:
+            engine.acknowledge_narration(
+                self.led, dict(event, engine_log_index=True))
+        self.assertEqual(caught.exception.code, "narration_ack_invalid")
 
 
 if __name__ == "__main__":

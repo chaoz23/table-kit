@@ -36,6 +36,7 @@ const summary = () => {
   if (!s) return null;
   const { G, ctx } = s;
   return {
+    source_id: match.matchID,
     scenario: G.scenario,
     round: G.round,
     turn: G.order[G.active],

@@ -29,10 +29,31 @@ Mirror the engine log into the session file with the ledger tap:
 ```python
 from tablekit import engine
 from tablekit.events import Ledger
-engine.tap(Ledger("table-data/session.jsonl"), engine.state_from("node engine/move.mjs state"))
+ledger = Ledger("table-data/session.jsonl")
+written = engine.tap(ledger, engine.state_from("node engine/move.mjs state"))
+
+# After the table was actually told about one exact returned engine event:
+event = next(row for row in written if "engine_log_index" in row)
+engine.acknowledge_narration(ledger, event, evidence="discord-message-id")
 ```
 
-The tap is idempotent and keeps its position **inside the session file**, not
-in a sidecar — a tap that stores its position separately loses its place the
-first time a session resumes from a different directory, and then silently
-re-narrates twenty minutes of combat.
+The ingestion and narration cursors are separate. The tap is idempotent and
+derives its ingestion position from contiguous, fingerprinted engine events
+that were durably appended **inside the session file**. It never advances from
+`log_len` alone. A `log_tail` must contain the next expected index; if history
+was compacted, reset, forked, reordered, or is behind the local cursor, `tap`
+raises a typed `EngineSyncError` and leaves the cursor where it was.
+
+`acknowledge_narration` accepts an exact event returned by `tap`, verifies its
+index and content fingerprint against the ledger, and only then advances
+`narrated_through`. Supplying a scalar `narrated_through` in engine state is not
+narration evidence.
+
+Adapters should provide a stable, non-empty `source_id` (the bundled client
+uses the boardgame.io match ID); once a ledger is bound to one, later states
+must keep providing it. Without one, overlap fingerprints still catch
+rewritten history, but a suffix beginning exactly at the next unseen index
+cannot independently prove that it came from the same source. Legacy
+length-only cursor marks are deliberately refused as
+`legacy_cursor_unverifiable`; start a new ledger or explicitly migrate the old
+one rather than guessing which events it contains.

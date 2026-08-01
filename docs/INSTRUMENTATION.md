@@ -92,7 +92,16 @@ common case. Accusing on silence alone would make the checker wrong most of the
 time it spoke, which is how a live checker gets ignored inside twenty minutes.
 
 `unnarrated` needs the engine's own log length. Without it the check is
-**skipped, not guessed**.
+**skipped, not guessed**. The engine's length is not itself a synchronization
+cursor: a state that reports ten entries but supplies only the last four does
+not make the first six available. The ledger tap advances only through a
+contiguous, fingerprinted delta it actually appended and refuses typed gap,
+reset, fork, reorder, and cursor-ahead states.
+
+Mirroring an engine entry is not evidence that the table heard it. Narration
+progress advances only through `tablekit.engine.acknowledge_narration()`, using
+an exact correlated event returned by the tap. A bare `narrated_through` scalar
+in engine state is ignored.
 
 ### `ux` — what did the seat's evening look like?
 

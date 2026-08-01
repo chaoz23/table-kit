@@ -23,6 +23,7 @@ checks work on a finished session, on someone else's session, and in a test.
 
 import time
 
+from . import engine as engine_mod
 from . import pairs as pairs_mod
 
 
@@ -51,8 +52,12 @@ def check(ledger, cfg=None, now=None, state=None):
     """Run every check. Returns a list of findings, most severe first.
 
     `state` is an optional dict from a game engine:
-    `{"turn": seat_id, "log_len": int, "narrated_through": int}`.
+    `{"turn": seat_id, "log_len": int}`.
     Checks that need it are skipped when it is absent — skipped, not guessed.
+
+    Narration progress is deliberately not trusted from `state`.  It advances
+    only through `engine.acknowledge_narration()`, which correlates the
+    acknowledgment to an exact durably ingested engine event.
     """
     now = now if now is not None else time.time()
     thr = (cfg.thresholds if cfg else {})
@@ -64,10 +69,7 @@ def check(ledger, cfg=None, now=None, state=None):
     # 1. Engine events the table was never told about. Requires the engine's
     #    own count — without it there is no way to know, so we do not guess.
     if state and state.get("log_len") is not None:
-        narrated = state.get("narrated_through")
-        if narrated is None:
-            mark = ledger.last(etype="qc.mark")
-            narrated = mark.get("narrated_through") if mark else 0
+        narrated = engine_mod.narrated_through(ledger)
         gap = state["log_len"] - narrated
         if gap > 0:
             findings.append(_f(
