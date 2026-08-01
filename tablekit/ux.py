@@ -37,13 +37,29 @@ def seat_stats(ledger, cfg=None, now=None):
     callers who want "how long has this seat been quiet *right now*" pass
     `now` — and the detector, which is the thing that accuses, always does.
     """
-    rows = ledger.read()
+    rows = ledger.records()
     start, end, _ = session_span(rows)
     if start is None:
         return {}
     if now is not None:
         end = max(end, now)
-    inbound = [r for r in rows if r.get("type") == "qa.inbound"]
+    # Receipts are immutable. If a previously unknown source ID is repaired by
+    # a later exact config mapping, the routed disposition carries the repaired
+    # seat; derive metrics from that fact without rewriting history.
+    repaired_seats = {}
+    for route in rows:
+        key = (route.get("source"), route.get("source_id"))
+        if (route.get("type") == "qa.route" and all(key)
+                and route.get("seat") not in (None, "unknown")
+                and route.get("status") != "quarantined"):
+            repaired_seats[key] = route["seat"]
+    inbound = []
+    for rec in rows:
+        if rec.get("type") != "qa.inbound":
+            continue
+        key = (rec.get("source"), rec.get("source_id"))
+        effective = repaired_seats.get(key)
+        inbound.append({**rec, "seat": effective or rec.get("seat")})
     turns = [r for r in rows if r.get("type") == "ux.turn"]
     signals = [r for r in rows if r.get("type") == "uxr.signal"]
     cues = [r for r in rows if r.get("type") == "out.open" and r.get("pair") == "cue"]
@@ -94,7 +110,7 @@ def beat_stats(ledger):
         return {"beats": 0}
     words = sorted(b.get("words", 0) for b in beats)
     chunks = [b.get("chunks", 1) for b in beats]
-    start, end, span = session_span(ledger.read())
+    start, end, span = session_span(ledger.records())
     return {
         "beats": len(beats),
         "median_words": words[len(words) // 2],
@@ -115,6 +131,19 @@ def transport_stats(ledger):
     listener = [r for r in rows if r["type"] == "qa.listener"]
     drops = [r for r in listener if r.get("state") in ("down", "reconnect")]
     cmds = [r for r in rows if r["type"] == "qa.command"]
+    routes = [r for r in rows if r["type"] == "qa.route"]
+    quarantine_events = [r for r in routes if r.get("status") == "quarantined"]
+    latest_routes = {}
+    for index, route in enumerate(routes):
+        key = ((route.get("source"), route.get("source_id"))
+               if route.get("source_id") else ("manual-row", index))
+        latest_routes[key] = route
+    quarantines = [r for r in latest_routes.values()
+                   if r.get("status") == "quarantined"]
+    quarantine_reasons = {}
+    for route in quarantines:
+        reason = route.get("reason") or "unknown"
+        quarantine_reasons[reason] = quarantine_reasons.get(reason, 0) + 1
     rolls = [r for r in ledger.read(etype="act") if r.get("roll_total") is not None]
     by_route = {}
     for r in rolls:
@@ -127,6 +156,11 @@ def transport_stats(ledger):
         "listener_interruptions": len(drops),
         "commands": len(cmds),
         "command_failures": sum(1 for c in cmds if not c.get("ok")),
+        "routing_quarantines": len(quarantines),
+        "routing_quarantine_events": len(quarantine_events),
+        "routing_quarantine_reasons": quarantine_reasons or None,
+        "routing_advisories": sum(1 for r in routes
+                                  if r.get("status") == "advisory"),
         "malformed_records": len([r for r in ledger.read()
                                   if r.get("type") == "_malformed"]),
     }

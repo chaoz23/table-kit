@@ -8,8 +8,10 @@ releases. Everything here runs under either runner.
 
 import json
 import os
+import stat
 import sys
 import tempfile
+import threading
 import time
 import unittest
 
@@ -17,7 +19,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tablekit import cli, detector, pairs, report, ux, uxr  # noqa: E402
 from tablekit.config import ConfigError, TableConfig  # noqa: E402
-from tablekit.events import Ledger, SchemaError, make, validate  # noqa: E402
+from tablekit.events import (  # noqa: E402
+    MAX_LINE_BYTES, Ledger, SchemaError, make, validate,
+)
 
 
 def cfg_dict(**over):
@@ -87,6 +91,111 @@ class TestEvents(TempLedger):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[1]["type"], "_malformed")
 
+    def test_schema_invalid_json_row_is_diagnostic_not_a_beat(self):
+        with open(self.led.path, "w") as f:
+            f.write(json.dumps({"ts": 1, "type": "ux.beat",
+                                "words": "many", "chunks": 1}) + "\n")
+        [diagnostic] = self.led.read()
+        self.assertEqual(diagnostic["type"], "_malformed")
+        self.assertIn("words", diagnostic["error"])
+        self.assertEqual(self.led.read(etype="ux.beat"), [])
+        self.assertEqual(self.led.current_beat(), 0)
+
+    def test_blank_rows_are_diagnostic_and_records_are_valid_only(self):
+        with open(self.led.path, "w") as f:
+            f.write("   \n")
+            f.write(json.dumps({"ts": 1, "type": "event", "text": "valid"})
+                    + "\n")
+        self.assertEqual([r["type"] for r in self.led.read()],
+                         ["_malformed", "event"])
+        self.assertEqual([r["type"] for r in self.led.records()], ["event"])
+
+    def test_json_scalar_and_non_finite_number_are_diagnostics(self):
+        with open(self.led.path, "w") as f:
+            f.write("[]\n")
+            f.write('{"ts":NaN,"type":"event","text":"x"}\n')
+            f.write('{"ts":1,"type":[],"text":"x"}\n')
+        rows = self.led.read()
+        self.assertEqual([r["type"] for r in rows],
+                         ["_malformed", "_malformed", "_malformed"])
+        self.assertEqual(self.led.read(lane="play"), [])
+
+    def test_bool_nan_inf_and_negative_numbers_are_refused(self):
+        bad = [
+            {"ts": True, "type": "event", "text": "x"},
+            {"ts": float("nan"), "type": "event", "text": "x"},
+            {"ts": float("inf"), "type": "event", "text": "x"},
+            {"ts": -1, "type": "event", "text": "x"},
+            {"ts": 1, "type": "ux.beat", "words": True, "chunks": 1},
+        ]
+        for rec in bad:
+            with self.subTest(rec=rec), self.assertRaises(SchemaError):
+                validate(rec)
+
+    def test_qc_status_and_severity_domains_are_strict(self):
+        with self.assertRaises(SchemaError):
+            make("qc.finding", check="x", detail="d", severity="maybe")
+        with self.assertRaises(SchemaError):
+            make("qc.finding", check="x", detail="d", status="still-ish")
+        with self.assertRaises(SchemaError):
+            make("qc.run", findings=0, status="probably-clean")
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission modes")
+    def test_new_ledger_directory_and_file_are_private(self):
+        parent = os.path.join(self.dir, "private", "nested")
+        ledger = Ledger(os.path.join(parent, "session.jsonl"))
+        ledger.append("event", text="secret")
+        self.assertEqual(stat.S_IMODE(os.stat(parent).st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(os.stat(ledger.path).st_mode), 0o600)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_append_refuses_a_ledger_symlink(self):
+        target = os.path.join(self.dir, "target.jsonl")
+        with open(target, "w") as f:
+            f.write("original\n")
+        link = os.path.join(self.dir, "session.jsonl")
+        os.symlink(target, link)
+        with self.assertRaises(SchemaError):
+            Ledger(link).append("event", text="must not land")
+        with open(target) as f:
+            self.assertEqual(f.read(), "original\n")
+
+    def test_concurrent_appends_remain_complete_json_lines(self):
+        ledger = Ledger(os.path.join(self.dir, "concurrent.jsonl"))
+        errors = []
+
+        def writer(worker):
+            try:
+                for item in range(20):
+                    ledger.append("event", text=f"{worker}:{item}")
+            except Exception as e:  # captured so thread failures fail the test
+                errors.append(e)
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        rows = ledger.read()
+        self.assertEqual(len(rows), 160)
+        self.assertNotIn("_malformed", {r["type"] for r in rows})
+
+    def test_oversized_row_is_bounded_diagnostic_and_reading_recovers(self):
+        valid = json.dumps({"ts": 1, "type": "event", "text": "after"})
+        with open(self.led.path, "wb") as f:
+            f.write(b"x" * (MAX_LINE_BYTES + 1) + b"\n")
+            f.write(valid.encode() + b"\n")
+        rows = self.led.read()
+        self.assertEqual([r["type"] for r in rows], ["_malformed", "event"])
+        self.assertIn("exceeds", rows[0]["error"])
+        self.assertEqual(self.led.read(etype="event")[0]["text"], "after")
+
+    def test_writer_refuses_a_row_its_reader_would_not_accept(self):
+        with self.assertRaises(SchemaError):
+            self.led.append("event", text="x" * MAX_LINE_BYTES)
+        self.assertFalse(os.path.exists(self.led.path))
+
     def test_current_beat_counts_beats(self):
         self.assertEqual(self.led.current_beat(), 0)
         self.led.append("ux.beat", words=1, chunks=1)
@@ -133,6 +242,84 @@ class TestConfig(unittest.TestCase):
         os.environ["TK_TEST_TOKEN"] = "abc"
         self.assertEqual(c.token(), "abc")
         del os.environ["TK_TEST_TOKEN"]
+
+    def test_config_must_be_an_object_with_known_fields(self):
+        with self.assertRaises(ConfigError):
+            TableConfig([])
+        with self.assertRaises(ConfigError) as e:
+            TableConfig(cfg_dict(seetz=[]))
+        self.assertIn("unknown field", str(e.exception))
+
+    def test_comment_metadata_fields_remain_allowed(self):
+        d = cfg_dict(_comment="for humans")
+        d["seats"][0]["_rolls_comment"] = "why"
+        TableConfig(d)
+
+    def test_thresholds_reject_bool_non_finite_and_range_errors(self):
+        values = [True, float("nan"), float("inf"), -1]
+        for value in values:
+            with self.subTest(value=value), self.assertRaises(ConfigError):
+                TableConfig(cfg_dict(thresholds={"seat_quiet_s": value}))
+        with self.assertRaises(ConfigError):
+            TableConfig(cfg_dict(thresholds={"max_chunks": 1.5}))
+
+    def test_duplicate_identity_keys_are_refused(self):
+        variants = []
+        duplicate_id = cfg_dict()
+        duplicate_id["seats"][1]["id"] = "rowan"
+        variants.append(duplicate_id)
+        alias_collision = cfg_dict()
+        alias_collision["seats"][1]["aliases"] = ["ROWAN"]
+        variants.append(alias_collision)
+        mention_collision = cfg_dict()
+        mention_collision["seats"][0]["mention"] = "<@123>"
+        variants.append(mention_collision)
+        sheet_collision = cfg_dict()
+        sheet_collision["seats"][0]["sheet_id"] = "42"
+        sheet_collision["seats"][1]["sheet_id"] = 42
+        variants.append(sheet_collision)
+        for config in variants:
+            with self.subTest(config=config), self.assertRaises(ConfigError):
+                TableConfig(config)
+
+    def test_relative_data_dir_is_anchored_to_the_config(self):
+        root = tempfile.mkdtemp()
+        path = os.path.join(root, "nested", "table.json")
+        cfg = TableConfig(cfg_dict(data_dir="./data"), path=path)
+        self.assertEqual(cfg.data_dir,
+                         os.path.realpath(os.path.join(root, "nested", "data")))
+
+    def test_session_is_an_opaque_id_not_a_path(self):
+        with self.assertRaises(ConfigError):
+            TableConfig(cfg_dict(session="../other"))
+        cfg = TableConfig(cfg_dict())
+        for session in ("../other", "/tmp/other", ".", "a/b"):
+            with self.subTest(session=session), self.assertRaises(ConfigError):
+                cfg.ledger_path(session)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_session_file_symlink_cannot_escape_data_dir(self):
+        root = tempfile.mkdtemp()
+        outside = os.path.join(root, "outside.jsonl")
+        data = os.path.join(root, "data")
+        os.mkdir(data)
+        with open(outside, "w") as f:
+            f.write("outside\n")
+        os.symlink(outside, os.path.join(data, "session.jsonl"))
+        cfg = TableConfig(cfg_dict(data_dir=data))
+        with self.assertRaises(ConfigError):
+            cfg.ledger_path("session")
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_session_file_symlink_is_refused_even_with_an_internal_target(self):
+        root = tempfile.mkdtemp()
+        target = os.path.join(root, "target.jsonl")
+        with open(target, "w") as f:
+            f.write("target\n")
+        os.symlink(target, os.path.join(root, "session.jsonl"))
+        cfg = TableConfig(cfg_dict(data_dir=root))
+        with self.assertRaises(ConfigError):
+            cfg.ledger_path("session")
 
 
 # ------------------------------------------------------------------ uxr
@@ -269,6 +456,17 @@ class TestPairs(TempLedger):
 
 
 class TestDetector(TempLedger):
+    def test_invalid_audit_row_cannot_distort_live_silence_state(self):
+        with open(self.led.path, "w") as f:
+            f.write(json.dumps({"ts": 1, "type": "ux.beat",
+                                "words": "many", "chunks": 1}) + "\n")
+        now = time.time()
+        self.led.append("ux.beat", ts=now, words=5, chunks=1)
+        findings = detector.check(self.led, self.cfg, now=now + 5)
+        self.assertNotIn("seat_quiet", {f["check"] for f in findings})
+        stats = ux.seat_stats(self.led, self.cfg, now=now + 5)
+        self.assertLessEqual(stats["seats"]["rowan"]["longest_silence_s"], 5)
+
     def test_empty_session_produces_no_findings(self):
         self.assertEqual(detector.check(self.led, self.cfg), [])
 
@@ -427,6 +625,12 @@ class TestReport(TempLedger):
 
     def test_clean_session_exits_zero(self):
         self._session()
+        now = time.time()
+        self.led.append("qa.inbound", ts=now - 1, seat="vesh", chars=5)
+        self.led.append("ux.beat", ts=now, words=10, chunks=1,
+                        text="session close")
+        result = detector.evaluate(self.led, self.cfg, now=now)
+        detector.record(self.led, result)
         rep = report.build(self.led, self.cfg)
         self.assertEqual(report.exit_code(rep), 0)
 
@@ -452,7 +656,12 @@ class TestReport(TempLedger):
         self.assertEqual(len(rep["qc"]["defects"]), 2)
 
     def test_defects_exit_one(self):
-        self._session(defects=True)
+        self._session()
+        now = time.time()
+        self.led.append("ux.beat", ts=now, words=4, chunks=1,
+                        cued_seat="vesh", text="Vesh, go.")
+        result = detector.evaluate(self.led, self.cfg, now=now)
+        detector.record(self.led, result)
         rep = report.build(self.led, self.cfg)
         self.assertEqual(report.exit_code(rep), 1)
 
@@ -551,6 +760,67 @@ class TestCLI(TempLedger):
     def test_unknown_command_refuses(self):
         self.assertEqual(cli.main(["frobnicate"]), 2)
 
+    def test_unknown_duplicate_and_missing_flags_refuse_before_write(self):
+        cases = [
+            ("beat", "hello", "--bogus", "x"),
+            ("beat", "hello", "--chunks", "1", "--chunks", "2"),
+            ("beat", "hello", "--chunks"),
+        ]
+        for args in cases:
+            with self.subTest(args=args):
+                self.assertEqual(self.run_cli(*args), 2)
+                self.assertFalse(os.path.exists(self.led.path))
+
+    def test_empty_global_values_do_not_silently_select_defaults(self):
+        for flag in ("--config", "--session", "--ledger"):
+            with self.subTest(flag=flag):
+                self.assertEqual(cli.main(["beat", "hello", flag, ""]), 2)
+
+    def test_invalid_numeric_values_refuse_without_traceback_or_write(self):
+        cases = [
+            ("beat", "hello", "--chunks", "NaN"),
+            ("beat", "hello", "--chunks", "0"),
+            ("turn", "--seat", "rowan", "--wait", "inf"),
+            ("turn", "--seat", "rowan", "--wait", "-1"),
+            ("roll", "--seat", "rowan", "--dc", "101"),
+        ]
+        for args in cases:
+            with self.subTest(args=args):
+                self.assertEqual(self.run_cli(*args), 2)
+                self.assertFalse(os.path.exists(self.led.path))
+
+    def test_malformed_explicit_config_refuses_before_write(self):
+        config = os.path.join(self.dir, "bad.json")
+        with open(config, "w") as f:
+            f.write("{bad json\n")
+        code = cli.main(["beat", "hello", "--config", config,
+                         "--ledger", self.led.path])
+        self.assertEqual(code, 2)
+        self.assertFalse(os.path.exists(self.led.path))
+
+    def test_malformed_implicit_config_is_not_silently_ignored(self):
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.dir)
+            with open("table.json", "w") as f:
+                f.write("{bad json\n")
+            code = cli.main(["beat", "hello", "--ledger", self.led.path])
+        finally:
+            os.chdir(old_cwd)
+        self.assertEqual(code, 2)
+        self.assertFalse(os.path.exists(self.led.path))
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_cli_refuses_symlink_ledger_without_touching_target(self):
+        target = os.path.join(self.dir, "outside.jsonl")
+        with open(target, "w") as f:
+            f.write("original\n")
+        link = os.path.join(self.dir, "linked.jsonl")
+        os.symlink(target, link)
+        self.assertEqual(cli.main(["beat", "hello", "--ledger", link]), 2)
+        with open(target) as f:
+            self.assertEqual(f.read(), "original\n")
+
     def test_beat_then_inbound_closes_the_cue_pair(self):
         cfg_path = os.path.join(self.dir, "table.json")
         with open(cfg_path, "w") as f:
@@ -558,7 +828,9 @@ class TestCLI(TempLedger):
         common = ["--ledger", self.led.path, "--config", cfg_path]
         cli.main(["beat", "<@123> Vesh, the door opens.", "--cue", "vesh"] + common)
         self.assertEqual(len(pairs.open_now(self.led, "cue")), 1)
-        cli.main(["inbound", "--seat", "vesh", "--text", "I open it !yes"] + common)
+        pid = pairs.open_now(self.led, "cue")[0]["id"]
+        cli.main(["inbound", "--seat", "vesh", "--pair", pid,
+                  "--text", "I open it !yes"] + common)
         self.assertEqual(pairs.open_now(self.led, "cue"), [])
         self.assertEqual(len(self.led.read(lane="uxr")), 0)
 
@@ -604,9 +876,14 @@ class TestCLI(TempLedger):
         self.assertEqual(self.run_cli("consumed", "nope-1"), 2)
 
     def test_qc_exit_codes(self):
-        self.assertEqual(self.run_cli("qc"), 0)
+        cfg_path = os.path.join(self.dir, "table.json")
+        with open(cfg_path, "w") as f:
+            json.dump(cfg_dict(data_dir=self.dir), f)
+        common = ("--config", cfg_path, "--ledger", self.led.path)
+        self.assertEqual(cli.main(["qc", *common]), 2)
         self.led.append("ux.beat", words=900, chunks=9)
-        self.assertEqual(self.run_cli("qc"), 1)
+        self.assertEqual(cli.main(["qc", *common]), 1)
+        self.assertEqual(len(self.led.read(etype="qc.run")), 2)
 
     def test_park_writes_to_both_session_and_standing_list(self):
         """An issues list that resets every session is not an issues list."""
@@ -666,10 +943,6 @@ class TestCLI(TempLedger):
         self.assertEqual(cli.main(["init", p]), 2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestUncheckedIsNotClean(TempLedger):
     """The report must never present an absence of checking as an absence of
     defects.
@@ -707,7 +980,10 @@ class TestUncheckedIsNotClean(TempLedger):
 
     def test_checked_and_clean_still_says_none(self):
         self._session()
-        detector.record(self.led, [])          # qc ran, found nothing
+        now = self.led.records()[-1]["ts"] + 1
+        self.led.append("ux.beat", ts=now, words=5, chunks=1, text="close")
+        detector.record(self.led,
+                        detector.evaluate(self.led, self.cfg, now=now))
         rep = report.build(self.led, self.cfg)
         self.assertTrue(rep["qc"]["ran_live"])
         self.assertIn("Defects — none", report.render(rep))
@@ -716,7 +992,7 @@ class TestUncheckedIsNotClean(TempLedger):
     def test_a_bare_finding_does_NOT_count_as_having_checked(self):
         """Superseded: this originally asserted that any qc.finding meant the
         session had been checked. It does not. Ingest emits findings of its own
-        (`roll_needs_confirming`), so that rule let an unchecked session claim
+        (`roll_result_advisory`), so that rule let an unchecked session claim
         'Defects — none' again — the same lie one level down. Only `qc.run`,
         written solely by detector.record(), is proof."""
         self._session()
@@ -764,11 +1040,11 @@ class TestUncheckedIsNotClean(TempLedger):
             self.assertNotIn(c, checks)
 
     def test_a_finding_from_elsewhere_does_not_count_as_having_checked(self):
-        """The second layer of the same lie. `roll_needs_confirming` is emitted
+        """The second layer of the same lie. `roll_result_advisory` is emitted
         by INGEST, not by the qc suite, so a session where nobody ran qc had
         findings in it and the report went back to claiming clean."""
         self._session()
-        self.led.append("qc.finding", check="roll_needs_confirming",
+        self.led.append("qc.finding", check="roll_result_advisory",
                         detail="was that a 14?", severity="attention",
                         seat="rowan")
         rep = report.build(self.led, self.cfg)
@@ -788,3 +1064,210 @@ class TestUncheckedIsNotClean(TempLedger):
                                     "seat": None}])
         self.assertEqual(len(self.led.read(etype="qc.run")), 1)
         self.assertTrue(report.build(self.led, self.cfg)["qc"]["ran_live"])
+
+
+class TestAuthoritativeQC(TempLedger):
+    def _three_beats(self, final_words=10, final_chunks=1):
+        now = time.time()
+        for i in range(3):
+            self.led.append("ux.beat", ts=now - 2 + i, words=(
+                final_words if i == 2 else 10), chunks=(
+                final_chunks if i == 2 else 1), text=f"beat {i}")
+        return now
+
+    def _record(self, now, **kwargs):
+        result = detector.evaluate(self.led, self.cfg, now=now, **kwargs)
+        detector.record(self.led, result)
+        return result
+
+    def test_typed_clean_run_proves_exact_current_snapshot(self):
+        now = self._three_beats()
+        result = self._record(now)
+        rep = report.build(self.led, self.cfg)
+        self.assertEqual(result["status"], "checked_clean")
+        self.assertTrue(rep["qc"]["coverage_complete"])
+        self.assertEqual(rep["qc"]["checked_through"],
+                         rep["qc"]["current_cursor"])
+        self.assertEqual(result["coverage"]["counts"]["input"], 3)
+        self.assertEqual(result["coverage"]["counts"]["compatible"], 3)
+        self.assertGreater(result["coverage"]["counts"]["evaluated"], 0)
+        self.assertEqual(report.exit_code(rep), 0)
+
+    def test_record_refuses_if_input_changed_after_evaluation(self):
+        now = self._three_beats()
+        result = detector.evaluate(self.led, self.cfg, now=now)
+        self.led.append("event", text="raced input")
+        with self.assertRaises(SchemaError):
+            detector.record(self.led, result)
+        self.assertEqual(self.led.read(etype="qc.run"), [])
+
+    def test_inconsistent_clean_result_is_refused_before_any_write(self):
+        now = self._three_beats(final_words=900)
+        result = detector.evaluate(self.led, self.cfg, now=now)
+        result["status"] = "checked_clean"
+        with self.assertRaises(SchemaError):
+            detector.record(self.led, result)
+        self.assertEqual(self.led.read(etype="qc.run"), [])
+
+    def test_crash_during_result_events_is_detected_as_incomplete_commit(self):
+        now = self._three_beats(final_words=900)
+        result = detector.evaluate(self.led, self.cfg, now=now)
+
+        class CrashAfterRun(Ledger):
+            def __init__(self, path):
+                super().__init__(path)
+                self.appends = 0
+
+            def append(self, etype, **fields):
+                self.appends += 1
+                if self.appends == 2:
+                    raise OSError("simulated crash after qc.run")
+                return super().append(etype, **fields)
+
+        with self.assertRaises(OSError):
+            detector.record(CrashAfterRun(self.led.path), result)
+        rep = report.build(self.led, self.cfg)
+        self.assertIn("incomplete_qc_commit",
+                      {e["code"] for e in rep["qc"]["coverage_errors"]})
+        self.assertEqual(report.exit_code(rep), 2)
+
+    def test_early_run_then_later_input_is_stale_and_exit_two(self):
+        now = self._three_beats()
+        first = self._record(now)
+        self.led.append("ux.beat", ts=now + 1, words=10, chunks=1,
+                        text="after qc")
+        rep = report.build(self.led, self.cfg)
+        self.assertFalse(rep["qc"]["coverage_complete"])
+        self.assertEqual(rep["qc"]["checked_through"], first["checked_through"])
+        self.assertNotEqual(rep["qc"]["checked_through"],
+                            rep["qc"]["current_cursor"])
+        self.assertEqual(rep["qc"]["unchecked_ranges"], [{
+            "after": first["checked_through"],
+            "through": rep["qc"]["current_cursor"],
+        }])
+        self.assertIn("stale_qc", {e["code"] for e in rep["qc"]["coverage_errors"]})
+        self.assertEqual(report.exit_code(rep), 2)
+
+    def test_detector_exception_is_typed_recorded_and_never_clean(self):
+        now = self._three_beats()
+
+        def broken(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        result = detector.evaluate(self.led, self.cfg, now=now, check_fn=broken)
+        self.assertEqual(result["status"], "incomplete")
+        self.assertIn("evaluator_error", {e["code"] for e in result["errors"]})
+        detector.record(self.led, result)
+        rep = report.build(self.led, self.cfg)
+        self.assertIn("evaluator_error",
+                      {e["code"] for e in rep["qc"]["coverage_errors"]})
+        self.assertEqual(report.exit_code(rep), 2)
+
+    def test_invalid_row_after_clean_run_invalidates_coverage(self):
+        now = self._three_beats()
+        self._record(now)
+        with open(self.led.path, "a") as f:
+            f.write("{not json}\n")
+        rep = report.build(self.led, self.cfg)
+        self.assertIn("invalid_ledger_row",
+                      {e["code"] for e in rep["qc"]["coverage_errors"]})
+        self.assertEqual(report.exit_code(rep), 2)
+
+    def test_confirmed_finding_is_visible_below_report_sample_floor(self):
+        now = time.time()
+        self.led.append("ux.beat", ts=now, words=4, chunks=1,
+                        cued_seat="vesh", text="Vesh, go.")
+        result = self._record(now)
+        rep = report.build(self.led, self.cfg)
+        self.assertEqual(result["status"], "findings")
+        self.assertIn("undeliverable_cue",
+                      {f["check"] for f in rep["qc"]["defects"]})
+        self.assertIn("undeliverable_cue", report.render(rep))
+        self.assertEqual(report.exit_code(rep), 2)  # finding shown; aggregate refused
+
+    def test_attention_only_qc_and_report_both_exit_one(self):
+        now = self._three_beats(final_words=900)
+        result = self._record(now)
+        rep = report.build(self.led, self.cfg)
+        self.assertEqual(result["status"], "checked_with_advisories")
+        self.assertEqual(detector.exit_code(result), 1)
+        self.assertEqual(report.exit_code(rep), 1)
+
+    def test_finding_lifecycle_resolves_absent_finding_by_stable_id(self):
+        now = self._three_beats(final_words=900)
+        first = self._record(now)
+        fid = first["findings"][0]["finding_id"]
+        self.led.append("ux.beat", ts=now + 1, words=10, chunks=1,
+                        text="short again")
+        second = self._record(now + 1)
+        self.assertEqual(second["status"], "checked_clean")
+        rep = report.build(self.led, self.cfg)
+        self.assertEqual(rep["qc"]["attention"], [])
+        [historical] = [f for f in rep["qc"]["historical_findings"]
+                        if f["finding_id"] == fid]
+        self.assertEqual(historical["status"], "resolved")
+
+    def test_mutable_elapsed_detail_keeps_one_finding_id(self):
+        now = self._three_beats()
+        pairs.open_pair(self.led, "roll", "roll-stable", seat="rowan",
+                        detail="attack", ts=now - 1000)
+        first = self._record(now)
+        second = self._record(now + 60)
+        first_roll = [f for f in first["findings"]
+                      if f["check"] == "roll_unconsumed"][0]
+        second_roll = [f for f in second["findings"]
+                       if f["check"] == "roll_unconsumed"][0]
+        self.assertEqual(first_roll["finding_id"], second_roll["finding_id"])
+        self.assertNotEqual(first_roll["detail"], second_roll["detail"])
+        rep = report.build(self.led, self.cfg)
+        [current] = [f for f in rep["qc"]["defects"]
+                     if f["check"] == "roll_unconsumed"]
+        self.assertEqual(current["seen"], 2)
+
+    def test_partial_evaluator_set_is_explicitly_incomplete(self):
+        now = self._three_beats()
+        result = detector.evaluate(self.led, self.cfg, now=now,
+                                   enabled=["long_beat"])
+        self.assertEqual(result["status"], "incomplete")
+        self.assertTrue(result["coverage"]["disabled"])
+        self.assertIn("disabled_evaluators", {e["code"] for e in result["errors"]})
+
+    def test_invalid_engine_state_is_typed_incomplete_not_an_exception(self):
+        now = self._three_beats()
+        for state in ([], {"log_len": True},
+                      {"log_len": 2, "narrated_through": 3}):
+            with self.subTest(state=state):
+                result = detector.evaluate(self.led, self.cfg, now=now,
+                                           state=state)
+                self.assertEqual(result["status"], "incomplete")
+                self.assertIn("invalid_engine_state",
+                              {e["code"] for e in result["errors"]})
+
+    def test_config_and_evaluator_version_drift_are_named(self):
+        now = self._three_beats()
+        result = detector.evaluate(self.led, self.cfg, now=now)
+        result["evaluator_version"] = "tablekit-qc/old"
+        detector.record(self.led, result)
+        changed = TableConfig(cfg_dict(thresholds={"max_chunks": 9}))
+        rep = report.build(self.led, changed)
+        codes = {e["code"] for e in rep["qc"]["coverage_errors"]}
+        self.assertIn("evaluator_version_drift", codes)
+        self.assertIn("config_drift", codes)
+
+    def test_policy_change_supersedes_instead_of_resolving_old_finding(self):
+        now = self._three_beats(final_words=900)
+        first = self._record(now)
+        fid = first["findings"][0]["finding_id"]
+        self.led.append("ux.beat", ts=now + 1, words=10, chunks=1,
+                        text="short under changed policy")
+        changed = TableConfig(cfg_dict(thresholds={"long_beat_words": 500}))
+        second = detector.evaluate(self.led, changed, now=now + 1)
+        detector.record(self.led, second)
+        rep = report.build(self.led, changed)
+        [historical] = [f for f in rep["qc"]["historical_findings"]
+                        if f["finding_id"] == fid]
+        self.assertEqual(historical["status"], "superseded")
+
+
+if __name__ == "__main__":
+    unittest.main()

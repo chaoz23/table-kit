@@ -14,6 +14,12 @@ into something you can learn from — is what this repo is.
 It is an **example, not a framework**. Small enough to read in one sitting, and
 it expects to be edited.
 
+Discord writes are **disabled by default**. The outbound helper validates and
+prepares an immutable operation, denies unintended mentions, durably receipts
+every delivered chunk, and commits only complete delivery. It remains off
+until the operator explicitly consents and the production gates in
+[docs/TRANSPORT.md](docs/TRANSPORT.md) are satisfied.
+
 ```bash
 pip install tablekit
 tablekit init                      # writes table.json
@@ -58,6 +64,25 @@ pointed straight at it with no export step.
 | `uxr` | how did it *feel* from a seat?         | inferred from ordinary speech, then asked about at the close |
 | `out` | did any of it actually work?           | intent → payoff pairs |
 
+Inbound handling is deliberately fail-closed. A source-native message ID is
+committed before routing and deduplicates replays, including messages that are
+rejected or quarantined. An inbound can resolve **at most one** typed obligation:
+an explicit `pair_id` must name the compatible open pair. Being the only open
+candidate does not grant an uncorrelated event authority to close it. Blank
+messages acknowledge nothing; missing, unknown, cross-seat, and cross-kind
+correlations remain open and are surfaced in `qa.route`. This is the
+fail-closed bridge until PORT-002/PORT-003 provide host correlation and
+identity.
+
+Identity fallback is exact after Unicode/case/whitespace normalization, never a
+substring guess (`Will` does not capture `William`). Unknown speakers remain
+`unknown`. Relayed rolls additionally require a configured relay name, an
+actual bot flag, exact sheet ID or exact configured alias, a numeric result,
+a plausible declared natural-die range, and explicit pair correlation before
+resolution. Ordinary prose such as `14` or `nat 20` is **advisory only**;
+damage, healing, hit points, movement, and other non-roll quantities do not
+auto-resolve a roll.
+
 ### The `uxr` lane
 
 This is the one that does not exist elsewhere, and the one the no-syntax rule
@@ -89,6 +114,13 @@ check; where it and the GM disagree is itself the interesting part.
 ```bash
 tablekit report
 ```
+
+Run `tablekit qc` after the last session mutation first. QC records its input
+and config digests, exact checked-through cursor, evaluator coverage/errors,
+and explicit finding transitions automatically. A report exits 2 and names the
+gap when that run is missing, stale, invalid, or incomplete; an attention-only
+run exits 1 consistently in both commands. Findings remain visible even when
+the report refuses an aggregate claim.
 
 Defects first, then what the seats said, then whether the craft moves worked,
 then the shape of the evening, then whether the plumbing held.
@@ -146,18 +178,24 @@ docs/            INSTRUMENTATION.md is the one to read
 
 ## Exit codes
 
-Same convention as the sibling projects: **0** clean, **1** findings worth
-looking at, **2** refused. Exit 2 is an honest refusal — bad input, or not
-enough happened to say anything — and it is deliberately distinct from "the
-session was fine."
+Same convention as the sibling projects: **0** coverage-complete clean,
+**1** findings or advisories worth looking at, **2** refused/incomplete. Exit
+2 covers bad input, stale or failed QC, and insufficient evidence; it is
+deliberately distinct from "the session was fine." Current evidence remains
+`self_attested` until a host boundary outside the evaluated agent owns it. An
+unresolved routing quarantine is exit 1 even when it safely prevented a bad
+state transition; operator work still remains.
 
 ## Docs
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md) — a table running in about ten minutes
 - [docs/INSTRUMENTATION.md](docs/INSTRUMENTATION.md) — the lanes, the event
   schema, and the provenance of every default
-- [docs/TRANSPORT.md](docs/TRANSPORT.md) — mandatory mentions, the relay tax,
-  cursor ownership, and the other things that cost an evening to learn
+- [docs/TRANSPORT.md](docs/TRANSPORT.md) — mandatory mentions, Discord
+  capability and recovery boundaries, the relay tax, and the other things that
+  cost an evening to learn
+- [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md) — paths, permissions, durability,
+  plaintext storage, and the current integrity boundary
 - [bootstrap/CORE.md](bootstrap/CORE.md) — if an agent is about to GM for the
   first time, this is the page to hand it
 
@@ -165,7 +203,18 @@ session was fine."
 
 `tool.json` describes the command surface — all of it operator-side, none of it
 touched by anyone at the table. `tablekit schema` prints the event schema,
-signal buckets and exit codes as JSON. The session file is JSONL with one
-object per line and a documented type registry; reading it needs no library.
+typed pair outcomes, signal buckets and exit codes as JSON. The session file is
+JSONL with one object per line and a documented type registry; reading it needs
+no library.
+Treat it as table-private data and as evidence, not a cryptographically trusted
+audit log; the exact boundary is documented in
+[DATA_SAFETY.md](docs/DATA_SAFETY.md).
+
+For outbound use, call `post.prepare()` first when inspection is enough. A live
+`post.post()` requires `transport.write_enabled=true`; supply and persist an
+`operation_id`, and treat every status other than `committed` as not fully
+delivered. `post.resume()` can recover the complete bounded plan from the
+ledger after interruption. The exact retry/reconciliation contract is in
+[TRANSPORT.md](docs/TRANSPORT.md).
 
 MIT.

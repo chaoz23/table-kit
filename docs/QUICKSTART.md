@@ -19,7 +19,8 @@ and prints its report. Nothing to configure, no network.
 tablekit init          # writes table.json
 ```
 
-Edit it. The only rule the loader enforces is that **every agent seat carries
+Edit it. The loader rejects unknown fields and bad types, requires every
+identity key to resolve to one seat, and requires **every agent seat to carry
 the literal mention its chat platform needs**:
 
 ```json
@@ -28,6 +29,11 @@ the literal mention its chat platform needs**:
 
 Leave it out and the config is refused at load, on purpose — see
 [TRANSPORT.md](TRANSPORT.md) for the evening that rule cost.
+
+Relative `data_dir` values are anchored to the directory containing
+`table.json`, in both the Python tools and Discord listener. Session names are
+opaque IDs such as `session-1`, not paths. Comment-only JSON keys may start
+with `_`, as they do in the generated example.
 
 ## 3. Nothing to teach the table
 
@@ -41,11 +47,20 @@ Without a chat platform, drive it by hand:
 
 ```bash
 tablekit beat "The causeway is coming up out of the water. Rowan, you are first onto the wet stone." --cue rowan
-tablekit inbound --seat rowan --text "I go slow, watching the water line."
+# Copy the cue pair ID printed by beat:
+tablekit inbound --seat rowan --pair cue-1785440000000-7a04fb81b49c49e68b72f8d21ba117da --text "I go slow, watching the water line."
 tablekit roll --seat rowan "Perception to place the sound"
-tablekit consumed roll-1785440000-0000-3f2a
-tablekit qc                 # between beats — one line, or a defect
+tablekit consumed roll-1785440000000-4f3c2a107af149cc91f62331dbf67adc
+tablekit qc                 # between beats — evaluates and records its coverage
 ```
+
+`inbound` closes at most one cue/check-in obligation and requires `--pair ID`
+to correlate it, even when that is the seat's only open obligation. Without a
+pair ID, the inbound is recorded and the unresolved match remains visible as
+`missing_correlation`. Blank text acknowledges nothing. A typed roll result
+remains advisory—use the returned roll ID with `consumed` after correlating and
+confirming it. A verified structured roll relay can resolve it only when the
+host supplies that explicit pair correlation.
 
 When someone says something that tells you how the evening is landing, record
 it with their own words attached:
@@ -66,15 +81,69 @@ export TABLE_BOT_TOKEN=...
 node transport/discord/listen.mjs table.json | python3 -m tablekit.ingest &
 ```
 
-and post through the helper so mentions are guaranteed and beats are recorded:
+Enable the bot's privileged `MESSAGE_CONTENT` intent in Discord's Developer
+Portal first. The listener requests that capability and exits 2 with a typed
+stderr diagnosis if Discord rejects it; REST cannot bypass the same content
+restriction. The bot user ID comes from Discord's READY event, not config.
+
+The current listener can Resume recoverable disconnects during one process,
+but it has no downstream commit acknowledgment, durable checkpoint, or
+cold-start backfill yet. Treat it as live streaming, not proof of complete
+session capture; see [TRANSPORT.md](TRANSPORT.md#4-resume-is-not-a-durable-checkpoint).
+
+The listener must supply stable message IDs. Every ID is durably receipted
+before routing, including quarantined messages; missing IDs cannot resolve
+state. Unknown identities and missing or invalid pair correlations stay visible
+in `qa.route` instead of being guessed.
+
+Outbound writes are disabled in the generated config. You can inspect the
+exact bounded payload without a token, ledger write, or network call:
 
 ```python
 from tablekit import load, post
-from tablekit.events import Ledger
 
 cfg = load()
+plan = post.prepare(
+    cfg,
+    "Vesh, the water has gone quiet around your ankles.",
+    cue="vesh",
+    operation_id="session-1-beat-17",
+)
+print(plan["payloads"])
+```
+
+Only in an owned test channel, after the production gates in
+[TRANSPORT.md](TRANSPORT.md) are satisfied, set `transport.write_enabled` to
+the JSON boolean `true`, configure `channel_id`, `bot_user_id`, and
+`token_env`, then call the helper. Retain and reuse the operation ID if the
+caller is interrupted:
+
+```python
+from tablekit.events import Ledger
+
+cfg = load()  # reload after changing table.json
 led = Ledger(cfg.ledger_path())
-post.post(cfg, led, "Vesh, the water has gone quiet around your ankles.", cue="vesh")
+result = post.post(
+    cfg,
+    led,
+    "Vesh, the water has gone quiet around your ankles.",
+    cue="vesh",
+    operation_id="session-1-beat-17",
+)
+if result["status"] != "committed":
+    # disabled / invalid / failed / partial are refusals, not delivered beats
+    raise RuntimeError(result)
+```
+
+The prepare/receipt/commit records make completed retries no-ops and partial
+delivery repairable. They do not make the current listener a production
+control plane; read the explicit limits before enabling writes.
+
+After an interrupted call, the durable prepare record contains the complete
+bounded plan. Resume it without reconstructing the original text:
+
+```python
+result = post.resume(cfg, led, "session-1-beat-17")
 ```
 
 ## 5. Close the evening
@@ -93,7 +162,8 @@ spots.
 
 ```bash
 tablekit sweep      # name the outcomes of anything still hanging
-tablekit report     # exit 0 clean, 1 findings, 2 not enough happened
+tablekit qc         # final current snapshot; later input makes it visibly stale
+tablekit report     # 0 clean, 1 findings/advisories, 2 incomplete/refused
 tablekit report --json --out reports/session-1.json
 ```
 

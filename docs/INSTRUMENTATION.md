@@ -19,24 +19,53 @@ Unknown event types are **refused at write time**. A typo that lands in the
 file as an unreadable record is worse than a crash, because months later it
 reads as an absence rather than an error.
 
+Every decoded row is validated again on read. Invalid JSON, non-object rows,
+unknown event types, missing fields, wrong required-field types, non-finite
+numbers, and oversized lines become line-local `_malformed` diagnostics in an
+unfiltered audit read. They are excluded from typed and lane reads, so corrupt
+input cannot become a beat, close a pair, or change a denominator. See
+[DATA_SAFETY.md](DATA_SAFETY.md) for the storage and authority boundary.
+Internal state and metric consumers use the schema-valid `Ledger.records()`
+view; `Ledger.read()` with no filter remains the diagnostic audit surface.
+
 ## The lanes
 
 ### `qa` — did the machinery work?
 
-`qa.post`, `qa.post_failed`, `qa.inbound`, `qa.listener`, `qa.command`.
+`qa.post.prepare`, `qa.post.receipt`, `qa.post.partial`, `qa.post.reconcile`,
+`qa.post.commit`, compatibility `qa.post`, `qa.post_failed`, `qa.inbound`,
+`qa.route`, `qa.listener`, `qa.command`.
 
 Delivery, latency, listener uptime, command failures. This lane exists because
 the most expensive failure in a hybrid table is not a bug, it is a *silent*
 bug: a listener that dies mid-session means play continues, nothing errors, and
 the record simply stops.
 
+Outbound posting uses prepare/deliver/commit semantics. `prepare` records the
+complete bounded immutable source/payload plan before network I/O, one
+`receipt` durably binds each delivered Discord message ID to its operation and
+chunk, `partial` makes incomplete delivery explicit, `reconcile` records a
+covered remote-history check, and `commit` is the only terminal success. The
+older `qa.post` summary remains for report compatibility but is written only
+during successful finalization.
+
 Player prose is **not stored by default**. The kit records that a seat spoke
 and roughly how much. Accumulating a transcript changes what this tool is, so
 it takes an explicit `--keep-text`.
 
+`qa.inbound` is the durable source receipt; `qa.route` is its disposition. A
+valid source-native ID is committed before routing and deduplicates every
+replay, including rejected and quarantined messages. Route status is one of
+`routed`, `observed`, `advisory`, `ignored`, or `quarantined`, with a typed
+reason retained for operator review. Unknown speakers are recorded as
+`unknown`, never promoted into a plausible new seat. A message without a stable
+source ID is quarantined and cannot resolve an obligation. If a later exact
+config mapping repairs an unknown receipt, the new routed disposition supplies
+the effective seat for derived UX metrics without rewriting the original row.
+
 ### `qc` — was the refereeing correct?
 
-`qc.finding`, `qc.pass`, `qc.mark`.
+`qc.run`, `qc.finding`, `qc.pass`, `qc.mark`.
 
 Two severities:
 
@@ -63,7 +92,16 @@ common case. Accusing on silence alone would make the checker wrong most of the
 time it spoke, which is how a live checker gets ignored inside twenty minutes.
 
 `unnarrated` needs the engine's own log length. Without it the check is
-**skipped, not guessed**.
+**skipped, not guessed**. The engine's length is not itself a synchronization
+cursor: a state that reports ten entries but supplies only the last four does
+not make the first six available. The ledger tap advances only through a
+contiguous, fingerprinted delta it actually appended and refuses typed gap,
+reset, fork, reorder, and cursor-ahead states.
+
+Mirroring an engine entry is not evidence that the table heard it. Narration
+progress advances only through `tablekit.engine.acknowledge_narration()`, using
+an exact correlated event returned by the tap. A bare `narrated_through` scalar
+in engine state is ignored.
 
 ### `ux` — what did the seat's evening look like?
 
@@ -148,22 +186,49 @@ real session ran them **zero times across 77 beats**, and the report printed
 *"Defects — none"* — nothing was found because nothing looked, stated in the
 language of a clean bill of health.
 
-The report now distinguishes three states:
+Every `tablekit qc` invocation records a typed local result automatically. A
+run carries an immutable run ID, evaluator version and inventory, effective
+config digest, input digest/count, exact logical checked-through cursor,
+eligible counts, skips, errors, status, and finding IDs. `--record` remains an
+accepted compatibility no-op; there is no longer a documented way to run QC
+and silently discard whether it ran.
 
-- **checked, clean** — `Defects — none`
+The report distinguishes:
+
+- **coverage complete, clean** — `Defects — none`, only when the latest input,
+  config, and evaluator version exactly match the recorded run
 - **never checked** — `Defects — NOT CHECKED DURING PLAY`, naming the checks
   that can only fire live (`seat_quiet`, `unnarrated`) and were never given the
   chance
+- **incomplete** — stale/post-run input, invalid rows, evaluator errors,
+  disabled/skipped evaluators, config/tool drift, or too little evidence;
+  exit 2 and the precise cursor/error are shown
 - **found after the fact** — a post-hoc sweep runs at report time so there is
   always a verdict, and its findings are labelled `[found post-hoc]` because
   that is weaker evidence than a check run while the table sat there
 
-"Was this session checked?" is answered **only** by a `qc.run` event, which
-`detector.record()` is the sole writer of. The first version of this accepted
-any `qc.finding` as proof — but ingest emits findings of its own
-(`roll_needs_confirming`), so an unchecked session had findings in it and went
+"Was this session checked?" is answered only by a typed, current `qc.run` plus
+its matching digest and coverage—not by event presence alone. The first
+version accepted any `qc.finding` as proof, but ingest emits findings of its own
+(`roll_result_advisory`), so an unchecked session had findings in it and went
 straight back to claiming clean. Inferring "someone examined this" from a side
 effect of something else is the same false negative one level down.
+
+Finding identity is derived from evaluator plus stable correlation evidence,
+never mutable prose such as elapsed time. Every evaluation writes explicit
+`open` or `resolved` transitions. Reports show the latest open state separately
+from historical resolved/superseded findings; repetition alone is not treated
+as lifecycle.
+
+Confirmed findings are rendered even below `MIN_BEATS`; that floor withholds
+aggregate claims, not observed defects. Attention-only runs use exit 1 in both
+`qc` and `report`. Any incomplete coverage uses exit 2 even when the report
+also surfaces a finding.
+
+The result is labelled `self_attested`. Digests detect staleness and accidental
+drift inside this ledger; they are not host authentication or tamper evidence
+against an agent with the same file authority. That boundary remains the
+PORT-003 decision documented in [DATA_SAFETY.md](DATA_SAFETY.md).
 
 The sweep deliberately **excludes the live-only checks**. It could technically
 fire `seat_quiet` when the last beat happens to be recent, but doing so would
@@ -179,10 +244,12 @@ roll, checked on someone quiet. It does not show whether any of it worked,
 because the payoff is separated from the move by minutes and other people's
 turns. A pair records both halves as one thing.
 
-| pair | opens when | closes as |
+| pair | opens when | permitted outcomes |
 |---|---|---|
-| `cue` | a beat addresses a seat | `taken` / `expired` |
-| `roll` | a roll is called for | `consumed` / `unconsumed` |
+| `cue` | a beat addresses a seat | `taken`, `ignored`, `expired`, `superseded` |
+| `roll` | a roll is called for | `consumed`, `unconsumed`, `superseded` |
+| `checkin` | a quiet seat is checked on | `returned`, `absent`, `superseded` |
+| `endmarker` | a session ends | `matched`, `diverged`, `superseded` |
 
 Roll pairs carry `dc` and `rolled_by`. **Recording a DC is not stating one** —
 difficulty is conveyed in the fiction by default, and the number is said out
@@ -192,8 +259,37 @@ and several other craft rules from unfalsifiable to testable. `rolled_by`
 captures the seat's own preference (`self` by default; `dm` for the minority who
 would rather not roll), so "did this land differently for seats that do not roll
 their own dice" stays an answerable question.
-| `checkin` | a quiet seat is checked on | `returned` / `absent` |
-| `endmarker` | a session ends | `matched` / `diverged` |
+
+**Resolution is one typed transition, never a global sweep.** One inbound or
+roll result may close at most one open pair. A supplied correlation ID must name
+an open obligation of the expected kind and seat. Without one, no compatible
+pair is closed, even if only one is open; the event is durably receipted and
+quarantined as `missing_correlation` with the compatible pair IDs retained for
+diagnosis. Empty messages acknowledge nothing.
+Duplicate IDs, orphan or reordered closes, kind changes, invalid kind-specific
+outcomes, second closes, and closes timestamped before their opens are explicit
+lifecycle failures, not state that gets folded into a plausible answer.
+
+Generated pair IDs use a timestamp for diagnostics plus a UUID4; the ledger
+still atomically refuses duplicate opens. This removes the former short random
+suffix as a correctness dependency.
+
+**Free-form roll prose is advisory.** `14`, `nat 20`, and explicit arithmetic
+may create one `roll_result_advisory` attention item for correlation, but they
+never create an `act` or close a roll. Damage, healing, hit points, movement,
+and other non-roll quantities are ignored by this detector. A configured relay
+may resolve a roll only with verified bot role, exact sheet-ID or exact
+normalized alias attribution, a numeric total, any exposed natural die in
+range, and explicit correlation to the open roll pair. Missing or impossible
+relay evidence is quarantined with no `act` and no resolution; valid but
+uncorrelated results retain the observed `act` and are quarantined without
+closing an obligation. A successful roll `out.close` is self-contained: its
+obligation ID, source key, total, exposed die/natural, confidence, and provenance
+travel with the transition.
+
+Source-native principal IDs and evidence are retained, but alias fallback is
+still local and non-authoritative. Host-owned identity and the suite-wide
+`TableEvent` envelope remain portfolio decisions in `PORT-002`/`PORT-003`.
 
 **The bar for being a pair:** the payoff must be observable by someone other
 than the person who made the move. "Did the scene feel tense" is not a pair.

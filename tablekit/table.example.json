@@ -31,10 +31,12 @@
 
  "transport": {
   "kind": "discord",
+  "write_enabled": false,
   "channel_id": "000000000000000000",
-  "bot_user_id": "000000000000000000",
   "token_env": "TABLE_BOT_TOKEN",
+  "_write_comment": "Keep false by default. Set true only for an explicitly authorized channel after the production gates in docs/TRANSPORT.md; every live caller must retain and reuse its operation_id across recovery.",
   "roll_relay_bots": ["Beyond20"],
+  "_capability_comment": "Enable MESSAGE_CONTENT in Discord's Developer Portal. The listener discovers its bot user ID from READY and fails closed if content capability is unavailable; REST is not a bypass.",
   "_relay_comment": "Bots that post dice on a player's behalf (Beyond20 relays D&D Beyond sheet rolls into Discord). Their messages are attributed to whichever seat's name appears in the embed, so a player who rolls all evening does not read as silent — and their roll pairs actually close. An unattributable relay is flagged, never guessed."
  },
 

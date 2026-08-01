@@ -53,6 +53,36 @@ by tests, not a preference.
 - Below three occurrences, individual moments are listed and no rate is stated.
 - No composite score is produced anywhere.
 - Player prose is not stored unless you ask for it with --keep-text.
+- A source-native message ID is receipted before routing and deduplicates every
+  replay, including quarantine. Missing IDs cannot resolve state.
+- One inbound/result closes at most one typed obligation, and only with an
+  explicit correlation to that compatible open pair. Missing correlation,
+  blank input, and invalid correlation close none and remain visible.
+- Identity fallback is exact after Unicode/case/whitespace normalization;
+  unknown remains unknown and substring matching is forbidden.
+- Free-form roll prose is advisory only. A verified, exactly attributed,
+  structurally valid relay result may resolve a roll only when it also carries
+  an explicit pair correlation.
+- Pair IDs are collision-resistant; duplicate opens, orphan/second closes,
+  kind changes, and invalid kind-specific outcomes are refused.
+
+## Outbound authority
+
+- Discord writes are disabled by default. `transport.write_enabled` must be
+  the JSON boolean `true`, and enabling it is explicit channel-write consent,
+  not proof that production gates are complete.
+- `post.prepare(...)` returns the bounded immutable payload plan without
+  ledger or network I/O. Use it for inspection.
+- `post.post(...)` returns `disabled`, `invalid`, `failed`, `partial`, or
+  `committed`. Only `committed` is complete delivery. Supply and persist a
+  unique `operation_id`.
+- `post.resume(...)` reconstructs a prepared operation from the ledger. It
+  never resends an unreceipted chunk until authenticated remote history covers
+  the prepare time. The full source/payload plan is retained as sensitive table
+  data so recovery does not depend on caller memory.
+- Mentions are denied by default; only an explicit cue target can ping, once.
+  One operation is capped at ten Discord messages. See docs/TRANSPORT.md before
+  enabling writes.
 
 ## Related
 

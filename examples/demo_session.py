@@ -42,21 +42,22 @@ def beat(led, t, text, cue=None, chunks=1):
     led.append("qa.post", ts=t, ok=True, chars=len(text), chunks=chunks,
                latency_ms=90 + (len(text) % 60))
     if cue:
-        pairs.open_pair(led, "cue", f"cue-{int(t)}", seat=cue, detail=text[:80],
-                        ts=t)
+        pid = f"cue-{int(t)}"
+        pairs.open_pair(led, "cue", pid, seat=cue, detail=text[:80], ts=t)
+        return pid
+    return None
 
 
-def says(led, t, seat, text, signal=None):
+def says(led, t, seat, text, signal=None, correlation_id=None):
     """A seat speaks. `signal` is what the GM understood from it — recorded
     with their actual words attached, never parsed out of a token."""
     led.append("qa.inbound", ts=t, seat=seat, chars=len(text),
                words=len(text.split()))
     if signal:
         uxr.record_signal(led, seat, signal, text, source="dm", ts=t)
-    for p in pairs.open_now(led, "cue"):
-        if p["seat"] == seat:
-            pairs.close_pair(led, "cue", p["id"], "taken", ts=t,
-                             opened_ts=p["opened_ts"])
+    pairs.close_one(led, ("cue",), seat, {"cue": "taken"},
+                    correlation_id=correlation_id,
+                    detail="demo inbound", ts=t)
 
 
 def main():
@@ -65,17 +66,18 @@ def main():
     led = Ledger(path)
     t = time.time() - 4200  # a seventy-minute session that ended just now
 
-    beat(led, t, "The causeway stones are coming up out of the water one at a "
-                 "time, and the bell above the chapel has not rung since you "
-                 "got here. Rowan, you are first onto the wet stone.",
-         cue="rowan")
+    cue_id = beat(led, t, "The causeway stones are coming up out of the water one at a "
+                          "time, and the bell above the chapel has not rung since you "
+                          "got here. Rowan, you are first onto the wet stone.",
+                  cue="rowan")
     says(led, t + 40, "rowan", "I go slow, watching the water line. Oh this is good.",
-         signal="resonance")
+         signal="resonance", correlation_id=cue_id)
 
     t += 300
-    beat(led, t, "Halfway across, something under the surface keeps pace with "
-                 "you. Brae?", cue="brae")
-    says(led, t + 55, "brae", "I hold up a hand and stop the group.")
+    cue_id = beat(led, t, "Halfway across, something under the surface keeps pace with "
+                          "you. Brae?", cue="brae")
+    says(led, t + 55, "brae", "I hold up a hand and stop the group.",
+         correlation_id=cue_id)
 
     t += 240
     # A roll called and never consumed — the ledger defect this catches.
@@ -90,10 +92,10 @@ def main():
                  "you do?", cue="vesh")
 
     t += 420
-    beat(led, t, "The stones behind you are already under. Rowan, you can see "
-                 "the chapel door standing open.", cue="rowan")
+    cue_id = beat(led, t, "The stones behind you are already under. Rowan, you can see "
+                          "the chapel door standing open.", cue="rowan")
     says(led, t + 60, "rowan", "I run for it — finally, this is what the lantern is for.",
-         signal="spotlight")
+         signal="spotlight", correlation_id=cue_id)
 
     t += 380
     beat(led, t, "Inside, thirty-one cuts in the doorframe, and the rope is "
@@ -116,7 +118,7 @@ def main():
     # beats, while there is still time to fix anything. This is where Vesh's
     # silence gets caught: forty minutes unaddressed while the table carried
     # the scene, with the undeliverable cue at beat 4 as the cause.
-    detector.record(led, detector.check(led, cfg, now=t + 90))
+    detector.record(led, detector.evaluate(led, cfg, now=t + 90))
 
     t += 300
     beat(led, t, "It is your own name, Rowan.")
@@ -136,7 +138,8 @@ def main():
     # End of the evening: expire what is still hanging.
     now = t + 800
     pairs.sweep(led, now=now, ttls=cfg.thresholds)
-    detector.record(led, detector.check(led, cfg, now=now))
+    beat(led, now, "The chapel door closes behind you. That is where we stop.")
+    detector.record(led, detector.evaluate(led, cfg, now=now))
 
     rep = report.build(led, cfg)
     print(report.render(rep))
