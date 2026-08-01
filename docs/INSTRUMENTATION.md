@@ -65,7 +65,7 @@ the effective seat for derived UX metrics without rewriting the original row.
 
 ### `qc` — was the refereeing correct?
 
-`qc.finding`, `qc.pass`, `qc.mark`.
+`qc.run`, `qc.finding`, `qc.pass`, `qc.mark`.
 
 Two severities:
 
@@ -186,22 +186,49 @@ real session ran them **zero times across 77 beats**, and the report printed
 *"Defects — none"* — nothing was found because nothing looked, stated in the
 language of a clean bill of health.
 
-The report now distinguishes three states:
+Every `tablekit qc` invocation records a typed local result automatically. A
+run carries an immutable run ID, evaluator version and inventory, effective
+config digest, input digest/count, exact logical checked-through cursor,
+eligible counts, skips, errors, status, and finding IDs. `--record` remains an
+accepted compatibility no-op; there is no longer a documented way to run QC
+and silently discard whether it ran.
 
-- **checked, clean** — `Defects — none`
+The report distinguishes:
+
+- **coverage complete, clean** — `Defects — none`, only when the latest input,
+  config, and evaluator version exactly match the recorded run
 - **never checked** — `Defects — NOT CHECKED DURING PLAY`, naming the checks
   that can only fire live (`seat_quiet`, `unnarrated`) and were never given the
   chance
+- **incomplete** — stale/post-run input, invalid rows, evaluator errors,
+  disabled/skipped evaluators, config/tool drift, or too little evidence;
+  exit 2 and the precise cursor/error are shown
 - **found after the fact** — a post-hoc sweep runs at report time so there is
   always a verdict, and its findings are labelled `[found post-hoc]` because
   that is weaker evidence than a check run while the table sat there
 
-"Was this session checked?" is answered **only** by a `qc.run` event, which
-`detector.record()` is the sole writer of. The first version of this accepted
-any `qc.finding` as proof — but ingest emits findings of its own
+"Was this session checked?" is answered only by a typed, current `qc.run` plus
+its matching digest and coverage—not by event presence alone. The first
+version accepted any `qc.finding` as proof, but ingest emits findings of its own
 (`roll_result_advisory`), so an unchecked session had findings in it and went
 straight back to claiming clean. Inferring "someone examined this" from a side
 effect of something else is the same false negative one level down.
+
+Finding identity is derived from evaluator plus stable correlation evidence,
+never mutable prose such as elapsed time. Every evaluation writes explicit
+`open` or `resolved` transitions. Reports show the latest open state separately
+from historical resolved/superseded findings; repetition alone is not treated
+as lifecycle.
+
+Confirmed findings are rendered even below `MIN_BEATS`; that floor withholds
+aggregate claims, not observed defects. Attention-only runs use exit 1 in both
+`qc` and `report`. Any incomplete coverage uses exit 2 even when the report
+also surfaces a finding.
+
+The result is labelled `self_attested`. Digests detect staleness and accidental
+drift inside this ledger; they are not host authentication or tamper evidence
+against an agent with the same file authority. That boundary remains the
+PORT-003 decision documented in [DATA_SAFETY.md](DATA_SAFETY.md).
 
 The sweep deliberately **excludes the live-only checks**. It could technically
 fire `seat_quiet` when the last beat happens to be recent, but doing so would

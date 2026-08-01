@@ -11,10 +11,10 @@
    "consumed <pair-id> [--outcome ...]": "Close one explicit pair using an outcome valid for that pair kind. Exit 2 for unknown, closed, mismatched, or invalid lifecycle transitions.",
    "checkin --seat S": "Record checking on a quiet seat and open a checkin pair; resolve it only with an explicitly correlated inbound.",
    "turn --seat S [--wait N]": "Record that a seat got the floor.",
-   "qc [--state FILE] [--record] [--json]": "Run the checks. Exit 1 if there are findings.",
+   "qc [--state FILE] [--json]": "Run and automatically record a typed self-attested evaluation with exact coverage/cursor. Exit 0 clean, 1 findings/advisories, 2 incomplete.",
    "pairs [--json]": "List outcome pairs still open.",
    "sweep": "Close pairs past their TTL with named outcomes. Exit 1 if any expired.",
-   "report [--json] [--out FILE]": "Post-session report. Exit 0 clean, 1 defects or unresolved routing quarantines, 2 not enough data.",
+   "report [--json] [--out FILE]": "Post-session report. Exit 0 coverage-complete clean, 1 findings/advisories or unresolved routing quarantines, 2 stale/invalid/incomplete or insufficient data.",
    "schema": "Event schema, route statuses, typed pair outcomes, signal buckets and exit codes as JSON.",
    "signal --seat S --kind pacing --quote \"<their words>\"": "Record a signal inferred from what a player already said. Buckets: pacing, floor, comprehension, resonance, spotlight, continuity. The quote is mandatory - an inference without evidence cannot be audited. Advisory always; can never become a defect.",
    "debrief": "With no arguments, print the plain-English close-out questions to ask in your own words. With --seat/--q/--a, record an answer."

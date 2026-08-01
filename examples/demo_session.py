@@ -118,7 +118,7 @@ def main():
     # beats, while there is still time to fix anything. This is where Vesh's
     # silence gets caught: forty minutes unaddressed while the table carried
     # the scene, with the undeliverable cue at beat 4 as the cause.
-    detector.record(led, detector.check(led, cfg, now=t + 90))
+    detector.record(led, detector.evaluate(led, cfg, now=t + 90))
 
     t += 300
     beat(led, t, "It is your own name, Rowan.")
@@ -138,7 +138,8 @@ def main():
     # End of the evening: expire what is still hanging.
     now = t + 800
     pairs.sweep(led, now=now, ttls=cfg.thresholds)
-    detector.record(led, detector.check(led, cfg, now=now))
+    beat(led, now, "The chapel door closes behind you. That is where we stop.")
+    detector.record(led, detector.evaluate(led, cfg, now=now))
 
     rep = report.build(led, cfg)
     print(report.render(rep))

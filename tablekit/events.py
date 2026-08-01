@@ -37,6 +37,7 @@ closed with what actually happened. Those are the only records in the file
 that can say whether a craft move worked.
 """
 
+import hashlib
 import json
 import math
 import os
@@ -231,9 +232,38 @@ FIELD_VALIDATORS = {
     "out.close": {"pair": _string, "id": _string, "outcome": _string},
 }
 
+OPTIONAL_FIELD_VALIDATORS = {
+    "qc.finding": {
+        "severity": lambda v, f, t: _enum(v, f, t, ("defect", "attention")),
+        "status": lambda v, f, t: _enum(
+            v, f, t, ("open", "resolved", "superseded")),
+        "finding_id": _string,
+        "evaluation_id": _string,
+    },
+    "qc.run": {
+        "evaluation_id": _string,
+        "status": lambda v, f, t: _enum(
+            v, f, t,
+            ("checked_clean", "checked_with_advisories", "findings",
+             "incomplete", "invalid", "internal_error")),
+        "authority_status": lambda v, f, t: _enum(
+            v, f, t, ("self_attested", "host_attested")),
+        "input_count": _integer,
+        "input_digest": _string,
+        "checked_through": _string,
+    },
+}
+
 
 class SchemaError(ValueError):
     """Refused at write time. See the module docstring for why this is loud."""
+
+
+def _enum(value, field, etype, allowed):
+    _string(value, field, etype)
+    if value not in allowed:
+        raise SchemaError(
+            f"{etype}: {field} must be one of {', '.join(allowed)}")
 
 
 def lane_of(etype):
@@ -268,6 +298,9 @@ def validate(rec):
     if etype == "qa.post.prepare" and len(rec["payloads"]) != rec["chunks"]:
         raise SchemaError(
             "qa.post.prepare: payload count must equal the chunk count")
+    for field, validator in OPTIONAL_FIELD_VALIDATORS.get(etype, {}).items():
+        if field in rec:
+            validator(rec[field], field, etype)
     if etype in ("out.open", "out.close") and rec["pair"] not in PAIR_KINDS:
         raise SchemaError(
             f"unknown pair kind {rec['pair']!r}; known: {', '.join(sorted(PAIR_KINDS))}")
@@ -485,12 +518,16 @@ class Ledger:
             return out
         self._assert_regular_not_symlink()
 
-        def malformed(line_no, error):
+        def malformed(line_no, error, raw=None):
             # Typed/lane reads are state inputs. Diagnostics belong only in an
             # unfiltered audit read and must never affect counts/denominators.
             if lane is None and etype is None:
-                out.append({"ts": 0.0, "type": "_malformed",
-                            "line": line_no, "error": error})
+                diagnostic = {"ts": 0.0, "type": "_malformed",
+                              "line": line_no, "error": error}
+                if raw is not None:
+                    diagnostic["raw_sha256"] = hashlib.sha256(raw).hexdigest()
+                    diagnostic["bytes_observed"] = len(raw)
+                out.append(diagnostic)
 
         with open(self.path, "rb") as f:
             n = 0
@@ -503,21 +540,21 @@ class Ledger:
                     if not raw.endswith(b"\n"):
                         while raw and not raw.endswith(b"\n"):
                             raw = f.readline(MAX_LINE_BYTES + 1)
-                    malformed(n, f"row exceeds {MAX_LINE_BYTES} bytes")
+                    malformed(n, f"row exceeds {MAX_LINE_BYTES} bytes", raw)
                     continue
                 try:
                     line = raw.decode("utf-8").strip()
                 except UnicodeDecodeError as e:
-                    malformed(n, f"invalid UTF-8: {e}")
+                    malformed(n, f"invalid UTF-8: {e}", raw)
                     continue
                 if not line:
-                    malformed(n, "blank ledger row is not valid JSON")
+                    malformed(n, "blank ledger row is not valid JSON", raw)
                     continue
                 try:
                     rec = json.loads(line, parse_constant=_invalid_json_constant)
                     validate(rec)
                 except (ValueError, SchemaError) as e:
-                    malformed(n, str(e))
+                    malformed(n, str(e), raw)
                     continue
                 if lane and lane_of(rec.get("type", "")) != lane:
                     continue

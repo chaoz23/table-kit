@@ -115,6 +115,13 @@ check; where it and the GM disagree is itself the interesting part.
 tablekit report
 ```
 
+Run `tablekit qc` after the last session mutation first. QC records its input
+and config digests, exact checked-through cursor, evaluator coverage/errors,
+and explicit finding transitions automatically. A report exits 2 and names the
+gap when that run is missing, stale, invalid, or incomplete; an attention-only
+run exits 1 consistently in both commands. Findings remain visible even when
+the report refuses an aggregate claim.
+
 Defects first, then what the seats said, then whether the craft moves worked,
 then the shape of the evening, then whether the plumbing held.
 
@@ -171,11 +178,13 @@ docs/            INSTRUMENTATION.md is the one to read
 
 ## Exit codes
 
-Same convention as the sibling projects: **0** clean, **1** findings worth
-looking at, **2** refused. Exit 2 is an honest refusal — bad input, or not
-enough happened to say anything — and it is deliberately distinct from "the
-session was fine." An unresolved routing quarantine is exit 1 even when it
-safely prevented a bad state transition; operator work still remains.
+Same convention as the sibling projects: **0** coverage-complete clean,
+**1** findings or advisories worth looking at, **2** refused/incomplete. Exit
+2 covers bad input, stale or failed QC, and insufficient evidence; it is
+deliberately distinct from "the session was fine." Current evidence remains
+`self_attested` until a host boundary outside the evaluated agent owns it. An
+unresolved routing quarantine is exit 1 even when it safely prevented a bad
+state transition; operator work still remains.
 
 ## Docs
 

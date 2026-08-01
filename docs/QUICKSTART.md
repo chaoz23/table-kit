@@ -51,7 +51,7 @@ tablekit beat "The causeway is coming up out of the water. Rowan, you are first 
 tablekit inbound --seat rowan --pair cue-1785440000000-7a04fb81b49c49e68b72f8d21ba117da --text "I go slow, watching the water line."
 tablekit roll --seat rowan "Perception to place the sound"
 tablekit consumed roll-1785440000000-4f3c2a107af149cc91f62331dbf67adc
-tablekit qc                 # between beats — one line, or a defect
+tablekit qc                 # between beats — evaluates and records its coverage
 ```
 
 `inbound` closes at most one cue/check-in obligation and requires `--pair ID`
@@ -162,7 +162,8 @@ spots.
 
 ```bash
 tablekit sweep      # name the outcomes of anything still hanging
-tablekit report     # exit 0 clean, 1 findings, 2 not enough happened
+tablekit qc         # final current snapshot; later input makes it visibly stale
+tablekit report     # 0 clean, 1 findings/advisories, 2 incomplete/refused
 tablekit report --json --out reports/session-1.json
 ```
 

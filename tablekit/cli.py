@@ -43,7 +43,7 @@ USAGE = """tablekit — instrumentation for a live hybrid table
                                                record an inferred signal
     tablekit park "<what looked off>" [--topic X]   park it, keep playing
     tablekit park --list | --done "<detail>"    the standing issues list
-    tablekit qc [--state FILE] [--record]      run the checks
+    tablekit qc [--state FILE] [--json]        run and record the checks
     tablekit pairs                             what is still open
     tablekit sweep                             expire what has timed out
 
@@ -467,7 +467,9 @@ def cmd_park(args):
 
 def cmd_qc(args):
     state_path = _flag(args, "--state")
-    do_record = _flag(args, "--record", False, takes_value=False)
+    # Kept as a compatibility no-op. QC records automatically; allowing an
+    # older agent to say --record must not turn a safe call into a refusal.
+    _flag(args, "--record", False, takes_value=False)
     as_json = _flag(args, "--json", False, takes_value=False)
     cfg, led = _ctx(args)
     _no_positionals(args, "qc")
@@ -480,14 +482,13 @@ def cmd_qc(args):
             raise ConfigError(f"--state: cannot read valid JSON from {state_path}: {e}") from e
         if not isinstance(state, dict):
             raise ConfigError("--state: expected a JSON object")
-    findings = detector.check(led, cfg, state=state)
-    if do_record:
-        detector.record(led, findings)
+    result = detector.evaluate(led, cfg, state=state)
+    detector.record(led, result)
     if as_json:
-        print(json.dumps(findings, indent=1))
+        print(json.dumps(result, indent=1))
     else:
-        print(detector.format_findings(findings))
-    return 1 if findings else 0
+        print(detector.format_evaluation(result))
+    return detector.exit_code(result)
 
 
 def cmd_pairs(args):

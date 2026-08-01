@@ -85,6 +85,10 @@ prove who wrote a well-formed record. An AI agent running with the same OS
 authority as the ledger can still append or replace valid-looking events; mode
 bits do not protect a file from its owner.
 
+QC input/config digests and checked-through cursors detect stale evaluations
+and ordinary drift, but they are stored by the same writer and therefore do
+not upgrade `self_attested` evidence into host-attested evidence.
+
 Accordingly, the current JSONL is evidence, not a tamper-proof audit log. A
 deployment that evaluates an agent must put the durable writer and ledger
 outside that agent's write authority and preserve source-native event IDs and
