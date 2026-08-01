@@ -156,8 +156,9 @@ session was fine."
 - [docs/QUICKSTART.md](docs/QUICKSTART.md) — a table running in about ten minutes
 - [docs/INSTRUMENTATION.md](docs/INSTRUMENTATION.md) — the lanes, the event
   schema, and the provenance of every default
-- [docs/TRANSPORT.md](docs/TRANSPORT.md) — mandatory mentions, the relay tax,
-  cursor ownership, and the other things that cost an evening to learn
+- [docs/TRANSPORT.md](docs/TRANSPORT.md) — mandatory mentions, Discord
+  capability and recovery boundaries, the relay tax, and the other things that
+  cost an evening to learn
 - [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md) — paths, permissions, durability,
   plaintext storage, and the current integrity boundary
 - [bootstrap/CORE.md](bootstrap/CORE.md) — if an agent is about to GM for the

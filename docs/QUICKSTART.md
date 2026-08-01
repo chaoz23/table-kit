@@ -72,6 +72,16 @@ export TABLE_BOT_TOKEN=...
 node transport/discord/listen.mjs table.json | python3 -m tablekit.ingest &
 ```
 
+Enable the bot's privileged `MESSAGE_CONTENT` intent in Discord's Developer
+Portal first. The listener requests that capability and exits 2 with a typed
+stderr diagnosis if Discord rejects it; REST cannot bypass the same content
+restriction. The bot user ID comes from Discord's READY event, not config.
+
+The current listener can Resume recoverable disconnects during one process,
+but it has no downstream commit acknowledgment, durable checkpoint, or
+cold-start backfill yet. Treat it as live streaming, not proof of complete
+session capture; see [TRANSPORT.md](TRANSPORT.md#3-resume-is-not-a-durable-checkpoint).
+
 and post through the helper so mentions are guaranteed and beats are recorded:
 
 ```python

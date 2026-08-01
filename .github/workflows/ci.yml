@@ -55,11 +55,14 @@ jobs:
           node-version: "22"
       - name: Listener and engine parse
         run: |
+          node --check transport/discord/gateway.mjs
           node --check transport/discord/listen.mjs
           node --check engine/story.mjs
           node --check engine/move.mjs
           node --check engine/game.cjs
           node --check engine/server.cjs
+      - name: Discord Gateway state-machine tests
+        run: node --test tests/test_discord_gateway.mjs
       - name: Listener refuses to start without a token
         run: |
           cat > /tmp/t.json <<'JSON'
