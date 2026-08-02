@@ -1,8 +1,10 @@
 # tablekit
 
 > Glue and instrumentation for running a tabletop game where some of the seats
-> are AI agents. One append-only JSONL per session serves as both the play
-> ledger (in the shape dmcheck reads) and a five-lane telemetry stream. Exit
+> are AI agents. One append-only JSONL per session serves as both a narrow
+> legacy dmcheck play lane and a five-lane telemetry stream. Versioned suite
+> contracts are packaged for explicit adapters; incompatible rows must never
+> disappear into a false-clean result. Exit
 > codes: 0 clean, 1 findings, 2 refused. Stdlib only, no network in the
 > analysis path, MIT.
 
@@ -46,6 +48,14 @@ by tests, not a preference.
 
 ## Contracts
 
+- `tablekit contract evaluation|event|golden` exposes the packaged
+  `table.evaluation/1.0`, `table.event/1.0`, and interoperability fixture.
+- Current evidence is `self_attested`. Only a separate protected host may emit
+  `host_attested`; native IDs and same-writer hashes are not authentication.
+- Exit 0 is only coverage-complete `checked_clean`. Findings/advisories exit 1;
+  incomplete, unsupported, invalid, and internal error results exit 2.
+- Unknown future event types are reported as structured unsupported coverage,
+  never ignored or guessed into a known type.
 - The table is never given a syntax to learn.
 - An inferred signal is advisory in every path and can never become a defect.
 - Every inferred signal stores the speaker's own words, so the inference is
@@ -87,4 +97,5 @@ by tests, not a preference.
 ## Related
 
 srdcheck (rules verdicts), charactercheck (sheet derivation), dmcheck (table
-conduct - reads this kit's session file with no export step).
+conduct; directly consumes only the legacy `turn`/`act`/`event` lane until the
+explicit TableEvent adapter lands).

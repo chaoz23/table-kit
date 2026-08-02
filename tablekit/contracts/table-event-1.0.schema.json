@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/chaoz23/table-kit/contracts/table-event-1.0.schema.json",
+  "title": "TableEvent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "campaign_id", "session_id", "session_sequence", "source",
+    "occurred_at", "recorded_at", "principal", "event_type", "payload",
+    "correlation_ids", "causation_id", "audience", "visibility",
+    "sensitivity", "provenance", "integrity"
+  ],
+  "properties": {
+    "schema_version": {"const": "table.event/1.0"},
+    "event_id": {"$ref": "#/$defs/id"},
+    "campaign_id": {"$ref": "#/$defs/id"},
+    "session_id": {"$ref": "#/$defs/id"},
+    "session_sequence": {"type": "integer", "minimum": 1},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "instance", "native_id", "sequence", "attestation"],
+      "properties": {
+        "kind": {"enum": ["discord", "tablekit", "engine", "dmcheck", "charactercheck", "srdcheck", "host", "fixture", "other"]},
+        "instance": {"$ref": "#/$defs/id"},
+        "native_id": {"$ref": "#/$defs/nullableId"},
+        "sequence": {"type": ["integer", "null"], "minimum": 0},
+        "attestation": {"enum": ["self_attested", "host_attested"]}
+      }
+    },
+    "occurred_at": {"$ref": "#/$defs/timestamp"},
+    "recorded_at": {"$ref": "#/$defs/timestamp"},
+    "principal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "actor_id", "controller_id", "role"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "actor_id": {"$ref": "#/$defs/nullableId"},
+        "controller_id": {"$ref": "#/$defs/nullableId"},
+        "role": {"enum": ["gm", "player", "agent", "system", "observer", "unknown"]}
+      }
+    },
+    "event_type": {
+      "enum": [
+        "session.opened", "session.closed", "message.observed",
+        "delivery.received", "transport.gap", "turn.started",
+        "action.declared", "roll.observed", "narration.obligation",
+        "narration.observed", "evaluation.completed"
+      ]
+    },
+    "payload": {"type": "object"},
+    "correlation_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "causation_id": {"$ref": "#/$defs/nullableId"},
+    "audience": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "visibility": {"enum": ["private", "table", "public", "system"]},
+    "sensitivity": {"enum": ["normal", "personal", "secret"]},
+    "provenance": {"enum": ["observed", "derived", "inferred", "reported", "decided"]},
+    "integrity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["predecessor_digest", "event_digest", "checkpoint"],
+      "properties": {
+        "predecessor_digest": {"$ref": "#/$defs/nullableDigest"},
+        "event_digest": {"$ref": "#/$defs/nullableDigest"},
+        "checkpoint": {"enum": ["none", "same_writer", "externally_protected"]}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"event_type": {"const": "session.opened"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/sessionOpened"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "session.closed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/sessionClosed"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "message.observed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/messageObserved"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "delivery.received"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/deliveryReceived"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "transport.gap"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/transportGap"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "turn.started"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/turnStarted"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "action.declared"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/actionDeclared"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "roll.observed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/rollObserved"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "narration.obligation"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/narrationObligation"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "narration.observed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/narrationObserved"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "evaluation.completed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/evaluationCompleted"}}}
+    },
+    {
+      "if": {
+        "properties": {"source": {"properties": {"attestation": {"const": "host_attested"}}}},
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "integrity": {
+            "properties": {
+              "event_digest": {"$ref": "#/$defs/digest"},
+              "checkpoint": {"const": "externally_protected"}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "nullableId": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "nullableDigest": {"oneOf": [{"$ref": "#/$defs/digest"}, {"type": "null"}]},
+    "sessionOpened": {
+      "type": "object", "additionalProperties": false,
+      "required": ["descriptor_digest", "authority_status"],
+      "properties": {"descriptor_digest": {"$ref": "#/$defs/nullableDigest"}, "authority_status": {"enum": ["self_attested", "host_attested"]}}
+    },
+    "sessionClosed": {
+      "type": "object", "additionalProperties": false,
+      "required": ["reason"], "properties": {"reason": {"enum": ["completed", "cancelled", "abandoned", "error"]}}
+    },
+    "messageObserved": {
+      "type": "object", "additionalProperties": false,
+      "required": ["content", "content_redacted"],
+      "properties": {"content": {"type": "string"}, "content_redacted": {"type": "boolean"}}
+    },
+    "deliveryReceived": {
+      "type": "object", "additionalProperties": false,
+      "required": ["operation_id", "message_id", "status"],
+      "properties": {
+        "operation_id": {"$ref": "#/$defs/id"},
+        "message_id": {"$ref": "#/$defs/id"},
+        "status": {"enum": ["received", "partial", "failed"]}
+      }
+    },
+    "transportGap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expected_sequence", "observed_sequence", "recoverable"],
+      "properties": {"expected_sequence": {"type": "integer", "minimum": 0}, "observed_sequence": {"type": "integer", "minimum": 0}, "recoverable": {"type": "boolean"}}
+    },
+    "turnStarted": {
+      "type": "object", "additionalProperties": false,
+      "required": ["actor_id"], "properties": {"actor_id": {"$ref": "#/$defs/id"}}
+    },
+    "actionDeclared": {
+      "type": "object", "additionalProperties": false,
+      "required": ["action_kind", "legal_timing"],
+      "properties": {"action_kind": {"type": "string", "minLength": 1}, "legal_timing": {"enum": ["normal_turn", "reaction", "ready_trigger", "legendary", "lair", "other", "unknown"]}}
+    },
+    "rollObserved": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total", "roll_kind"],
+      "properties": {"total": {"type": "number"}, "natural": {"type": ["integer", "null"], "minimum": 1}, "roll_kind": {"type": "string", "minLength": 1}}
+    },
+    "narrationObligation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["obligation_id", "kind"],
+      "properties": {"obligation_id": {"$ref": "#/$defs/id"}, "kind": {"enum": ["answer", "consume_roll", "narrate_event", "cue"]}}
+    },
+    "narrationObserved": {
+      "type": "object", "additionalProperties": false,
+      "required": ["content", "resolves_obligation_ids"],
+      "properties": {"content": {"type": "string"}, "resolves_obligation_ids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}}
+    },
+    "evaluationCompleted": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evaluation_id", "evaluation_schema", "status", "authority_status"],
+      "properties": {
+        "evaluation_id": {"$ref": "#/$defs/id"},
+        "evaluation_schema": {"const": "table.evaluation/1.0"},
+        "status": {"enum": ["checked_clean", "checked_with_advisories", "findings", "incomplete", "unsupported", "invalid", "internal_error"]},
+        "authority_status": {"enum": ["self_attested", "host_attested"]}
+      }
+    }
+  }
+}

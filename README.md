@@ -52,9 +52,11 @@ vocabulary. It was cut in 0.2.0 and the reasoning is preserved in
 
 ## What it does
 
-Everything a session produces goes into **one append-only JSONL file**, which
-is simultaneously the play ledger and the telemetry stream. `dmcheck` can be
-pointed straight at it with no export step.
+Everything a session produces currently goes into **one append-only JSONL
+file**, which is simultaneously the play ledger and the telemetry stream.
+dmcheck can consume the narrow legacy `turn`/`act`/`event` play lane directly;
+complete cross-tool handoff requires the explicit TableEvent adapter tracked by
+PORT-002 and must never silently discard incompatible rows.
 
 | lane  | answers                                | how |
 |-------|----------------------------------------|-----|
@@ -196,16 +198,22 @@ state transition; operator work still remains.
   cost an evening to learn
 - [docs/DATA_SAFETY.md](docs/DATA_SAFETY.md) — paths, permissions, durability,
   plaintext storage, and the current integrity boundary
+- [docs/CONTRACTS.md](docs/CONTRACTS.md) — shared EvaluationResult/TableEvent
+  schemas, versioning, fixtures, and the migration boundary
+- [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) — principals, capabilities, abuse
+  cases, and why current evidence remains self-attested
 - [bootstrap/CORE.md](bootstrap/CORE.md) — if an agent is about to GM for the
   first time, this is the page to hand it
 
 ## For agents
 
 `tool.json` describes the command surface — all of it operator-side, none of it
-touched by anyone at the table. `tablekit schema` prints the event schema,
+touched by anyone at the table. `tablekit schema` prints the repo-local event schema,
 typed pair outcomes, signal buckets and exit codes as JSON. The session file is
 JSONL with one object per line and a documented type registry; reading it needs
 no library.
+`tablekit contract evaluation`, `tablekit contract event`, and
+`tablekit contract golden` print the packaged cross-suite contracts and fixture.
 Treat it as table-private data and as evidence, not a cryptographically trusted
 audit log; the exact boundary is documented in
 [DATA_SAFETY.md](docs/DATA_SAFETY.md).

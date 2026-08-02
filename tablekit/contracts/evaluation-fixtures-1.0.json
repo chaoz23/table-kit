@@ -1,0 +1,496 @@
+[
+  {
+    "advisories": [],
+    "authority_status": "self_attested",
+    "context": {
+      "config_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "roster_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "session_descriptor_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_set_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "coverage": {
+      "compatible": 10,
+      "complete": true,
+      "eligible": 1,
+      "evaluated": 1,
+      "evaluators": [
+        {
+          "eligible": 1,
+          "evaluated": 1,
+          "id": "fixture-rule",
+          "required": true,
+          "skip_reasons": [],
+          "skipped": 0,
+          "status": "evaluated"
+        }
+      ],
+      "evidence_required": true,
+      "input": 10,
+      "skipped": 0
+    },
+    "cursor": {
+      "checked_through_event_id": "evt-010",
+      "gap_state": "none",
+      "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "errors": [],
+    "evaluation_id": "fixture-checked_clean-self_attested",
+    "exit_code": 0,
+    "findings": [],
+    "schema_version": "table.evaluation/1.0",
+    "status": "checked_clean",
+    "subject": {
+      "entity_refs": [],
+      "id": "session-golden",
+      "kind": "session",
+      "session_id": "session-golden"
+    },
+    "tool": {
+      "name": "fixturecheck",
+      "version": "1.0.0"
+    },
+    "warnings": []
+  },
+  {
+    "advisories": [
+      {
+        "code": "fixture",
+        "effective_policy": {
+          "required": true
+        },
+        "evidence_refs": [
+          "evt-008"
+        ],
+        "finding_id": "advisory-1",
+        "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "policy_version": "fixture/1",
+        "severity": "advisory",
+        "summary": "fixture advisory"
+      }
+    ],
+    "authority_status": "self_attested",
+    "context": {
+      "config_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "roster_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "session_descriptor_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_set_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "coverage": {
+      "compatible": 10,
+      "complete": true,
+      "eligible": 1,
+      "evaluated": 1,
+      "evaluators": [
+        {
+          "eligible": 1,
+          "evaluated": 1,
+          "id": "fixture-rule",
+          "required": true,
+          "skip_reasons": [],
+          "skipped": 0,
+          "status": "evaluated"
+        }
+      ],
+      "evidence_required": true,
+      "input": 10,
+      "skipped": 0
+    },
+    "cursor": {
+      "checked_through_event_id": "evt-010",
+      "gap_state": "none",
+      "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "errors": [],
+    "evaluation_id": "fixture-checked_with_advisories-self_attested",
+    "exit_code": 1,
+    "findings": [],
+    "schema_version": "table.evaluation/1.0",
+    "status": "checked_with_advisories",
+    "subject": {
+      "entity_refs": [],
+      "id": "session-golden",
+      "kind": "session",
+      "session_id": "session-golden"
+    },
+    "tool": {
+      "name": "fixturecheck",
+      "version": "1.0.0"
+    },
+    "warnings": []
+  },
+  {
+    "advisories": [],
+    "authority_status": "self_attested",
+    "context": {
+      "config_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "roster_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "session_descriptor_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_set_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "coverage": {
+      "compatible": 10,
+      "complete": true,
+      "eligible": 1,
+      "evaluated": 1,
+      "evaluators": [
+        {
+          "eligible": 1,
+          "evaluated": 1,
+          "id": "fixture-rule",
+          "required": true,
+          "skip_reasons": [],
+          "skipped": 0,
+          "status": "evaluated"
+        }
+      ],
+      "evidence_required": true,
+      "input": 10,
+      "skipped": 0
+    },
+    "cursor": {
+      "checked_through_event_id": "evt-010",
+      "gap_state": "none",
+      "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "errors": [],
+    "evaluation_id": "fixture-findings-self_attested",
+    "exit_code": 1,
+    "findings": [
+      {
+        "code": "fixture",
+        "effective_policy": {
+          "required": true
+        },
+        "evidence_refs": [
+          "evt-008"
+        ],
+        "finding_id": "finding-1",
+        "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "policy_version": "fixture/1",
+        "severity": "finding",
+        "summary": "fixture finding"
+      }
+    ],
+    "schema_version": "table.evaluation/1.0",
+    "status": "findings",
+    "subject": {
+      "entity_refs": [],
+      "id": "session-golden",
+      "kind": "session",
+      "session_id": "session-golden"
+    },
+    "tool": {
+      "name": "fixturecheck",
+      "version": "1.0.0"
+    },
+    "warnings": []
+  },
+  {
+    "advisories": [],
+    "authority_status": "self_attested",
+    "context": {
+      "config_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "roster_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "session_descriptor_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_set_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "coverage": {
+      "compatible": 10,
+      "complete": false,
+      "eligible": 1,
+      "evaluated": 0,
+      "evaluators": [
+        {
+          "eligible": 1,
+          "evaluated": 0,
+          "id": "fixture-rule",
+          "required": true,
+          "skip_reasons": [
+            {
+              "code": "incomplete",
+              "message": "fixture incomplete"
+            }
+          ],
+          "skipped": 1,
+          "status": "error"
+        }
+      ],
+      "evidence_required": true,
+      "input": 10,
+      "skipped": 1
+    },
+    "cursor": {
+      "checked_through_event_id": "evt-010",
+      "gap_state": "unknown",
+      "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "errors": [
+      {
+        "code": "incomplete",
+        "message": "fixture incomplete"
+      }
+    ],
+    "evaluation_id": "fixture-incomplete-self_attested",
+    "exit_code": 2,
+    "findings": [],
+    "schema_version": "table.evaluation/1.0",
+    "status": "incomplete",
+    "subject": {
+      "entity_refs": [],
+      "id": "session-golden",
+      "kind": "session",
+      "session_id": "session-golden"
+    },
+    "tool": {
+      "name": "fixturecheck",
+      "version": "1.0.0"
+    },
+    "warnings": []
+  },
+  {
+    "advisories": [],
+    "authority_status": "self_attested",
+    "context": {
+      "config_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "roster_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "session_descriptor_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_set_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "coverage": {
+      "compatible": 10,
+      "complete": false,
+      "eligible": 1,
+      "evaluated": 0,
+      "evaluators": [
+        {
+          "eligible": 1,
+          "evaluated": 0,
+          "id": "fixture-rule",
+          "required": true,
+          "skip_reasons": [
+            {
+              "code": "unsupported",
+              "message": "fixture unsupported"
+            }
+          ],
+          "skipped": 1,
+          "status": "error"
+        }
+      ],
+      "evidence_required": true,
+      "input": 10,
+      "skipped": 1
+    },
+    "cursor": {
+      "checked_through_event_id": "evt-010",
+      "gap_state": "unknown",
+      "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "errors": [
+      {
+        "code": "unsupported",
+        "message": "fixture unsupported"
+      }
+    ],
+    "evaluation_id": "fixture-unsupported-self_attested",
+    "exit_code": 2,
+    "findings": [],
+    "schema_version": "table.evaluation/1.0",
+    "status": "unsupported",
+    "subject": {
+      "entity_refs": [],
+      "id": "session-golden",
+      "kind": "session",
+      "session_id": "session-golden"
+    },
+    "tool": {
+      "name": "fixturecheck",
+      "version": "1.0.0"
+    },
+    "warnings": []
+  },
+  {
+    "advisories": [],
+    "authority_status": "self_attested",
+    "context": {
+      "config_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "roster_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "session_descriptor_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_set_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "coverage": {
+      "compatible": 10,
+      "complete": false,
+      "eligible": 1,
+      "evaluated": 0,
+      "evaluators": [
+        {
+          "eligible": 1,
+          "evaluated": 0,
+          "id": "fixture-rule",
+          "required": true,
+          "skip_reasons": [
+            {
+              "code": "invalid",
+              "message": "fixture invalid"
+            }
+          ],
+          "skipped": 1,
+          "status": "error"
+        }
+      ],
+      "evidence_required": true,
+      "input": 10,
+      "skipped": 1
+    },
+    "cursor": {
+      "checked_through_event_id": "evt-010",
+      "gap_state": "unknown",
+      "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "errors": [
+      {
+        "code": "invalid",
+        "message": "fixture invalid"
+      }
+    ],
+    "evaluation_id": "fixture-invalid-self_attested",
+    "exit_code": 2,
+    "findings": [],
+    "schema_version": "table.evaluation/1.0",
+    "status": "invalid",
+    "subject": {
+      "entity_refs": [],
+      "id": "session-golden",
+      "kind": "session",
+      "session_id": "session-golden"
+    },
+    "tool": {
+      "name": "fixturecheck",
+      "version": "1.0.0"
+    },
+    "warnings": []
+  },
+  {
+    "advisories": [],
+    "authority_status": "self_attested",
+    "context": {
+      "config_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "roster_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "session_descriptor_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_set_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "coverage": {
+      "compatible": 10,
+      "complete": false,
+      "eligible": 1,
+      "evaluated": 0,
+      "evaluators": [
+        {
+          "eligible": 1,
+          "evaluated": 0,
+          "id": "fixture-rule",
+          "required": true,
+          "skip_reasons": [
+            {
+              "code": "internal_error",
+              "message": "fixture internal_error"
+            }
+          ],
+          "skipped": 1,
+          "status": "error"
+        }
+      ],
+      "evidence_required": true,
+      "input": 10,
+      "skipped": 1
+    },
+    "cursor": {
+      "checked_through_event_id": "evt-010",
+      "gap_state": "unknown",
+      "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "errors": [
+      {
+        "code": "internal_error",
+        "message": "fixture internal_error"
+      }
+    ],
+    "evaluation_id": "fixture-internal_error-self_attested",
+    "exit_code": 2,
+    "findings": [],
+    "schema_version": "table.evaluation/1.0",
+    "status": "internal_error",
+    "subject": {
+      "entity_refs": [],
+      "id": "session-golden",
+      "kind": "session",
+      "session_id": "session-golden"
+    },
+    "tool": {
+      "name": "fixturecheck",
+      "version": "1.0.0"
+    },
+    "warnings": []
+  },
+  {
+    "advisories": [],
+    "authority_status": "host_attested",
+    "context": {
+      "config_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "policy_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "roster_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "session_descriptor_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "source_set_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "coverage": {
+      "compatible": 10,
+      "complete": true,
+      "eligible": 1,
+      "evaluated": 1,
+      "evaluators": [
+        {
+          "eligible": 1,
+          "evaluated": 1,
+          "id": "fixture-rule",
+          "required": true,
+          "skip_reasons": [],
+          "skipped": 0,
+          "status": "evaluated"
+        }
+      ],
+      "evidence_required": true,
+      "input": 10,
+      "skipped": 0
+    },
+    "cursor": {
+      "checked_through_event_id": "evt-010",
+      "gap_state": "none",
+      "input_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "errors": [],
+    "evaluation_id": "fixture-checked_clean-host_attested",
+    "exit_code": 0,
+    "findings": [],
+    "schema_version": "table.evaluation/1.0",
+    "status": "checked_clean",
+    "subject": {
+      "entity_refs": [],
+      "id": "session-golden",
+      "kind": "session",
+      "session_id": "session-golden"
+    },
+    "tool": {
+      "name": "fixturecheck",
+      "version": "1.0.0"
+    },
+    "warnings": []
+  }
+]
