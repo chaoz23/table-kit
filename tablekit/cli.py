@@ -21,7 +21,7 @@ import os
 import sys
 import time
 
-from . import detector, pairs, report, ux, uxr
+from . import contracts, detector, pairs, report, ux, uxr
 from .config import ConfigError, load as load_config
 from .events import (SCHEMA, Ledger, PAIR_KINDS, PAIR_OUTCOMES,
                      ROUTE_STATUSES, SchemaError)
@@ -51,7 +51,9 @@ USAGE = """tablekit — instrumentation for a live hybrid table
     tablekit debrief                  the plain-English questions to ask
     tablekit debrief --seat S --q "..." --a "..."      record an answer
     tablekit report [--json] [--out FILE]
-    tablekit schema                   the event schema, as JSON
+    tablekit schema                   the repo-local event schema, as JSON
+    tablekit contract evaluation|event|golden
+                                      a packaged suite contract or fixture
 
   options
     --config PATH   table config (default $TABLE_CONFIG or ./table.json)
@@ -555,13 +557,23 @@ def cmd_schema(args):
     return 0
 
 
+def cmd_contract(args):
+    if len(args) != 1 or args[0] not in ("evaluation", "event", "golden"):
+        raise ConfigError("contract: expected evaluation, event or golden")
+    name = args[0]
+    value = (contracts.golden_session() if name == "golden"
+             else contracts.schema(name))
+    print(json.dumps(value, indent=1))
+    return 0
+
+
 COMMANDS = {
     "init": cmd_init, "beat": cmd_beat,
     "inbound": cmd_inbound, "roll": cmd_roll, "consumed": cmd_consumed,
     "checkin": cmd_checkin, "turn": cmd_turn, "signal": cmd_signal,
     "debrief": cmd_debrief, "qc": cmd_qc, "pairs": cmd_pairs,
     "sweep": cmd_sweep, "park": cmd_park, "report": cmd_report,
-    "schema": cmd_schema,
+    "schema": cmd_schema, "contract": cmd_contract,
 }
 
 

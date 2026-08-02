@@ -27,10 +27,11 @@ Documentation = "https://github.com/chaoz23/table-kit/blob/main/docs/INSTRUMENTA
 tablekit = "tablekit.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "jsonschema>=4.18"]
 
-[tool.setuptools]
-packages = ["tablekit"]
+[tool.setuptools.packages.find]
+include = ["tablekit*"]
 
 [tool.setuptools.package-data]
 tablekit = ["table.example.json"]
+"tablekit.contracts" = ["*.json", "*.jsonl", "*.d.ts"]

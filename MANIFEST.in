@@ -1,0 +1,9 @@
+include LICENSE README.md llms.txt tool.json pyproject.toml
+recursive-include bootstrap *.md *.py
+recursive-include docs *.md
+recursive-include engine *.cjs *.md *.mjs
+recursive-include examples *.md *.py *.json
+recursive-include scripts *.py
+recursive-include tablekit *.d.ts *.json *.jsonl *.py
+recursive-include tests *.mjs *.py
+recursive-include transport *.mjs
