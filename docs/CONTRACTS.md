@@ -56,9 +56,9 @@ stream.
 - Unknown major versions are refused as `unsupported`.
 - Unknown event types in a future minor are preserved as opaque input and
   reported as structured unsupported coverage; they never crash or disappear.
-- Current unversioned table-kit rows remain the runtime storage format until an
-  explicit adapter lands. Native IDs and sequence are provenance, not
-  cryptographic authentication.
+- Current unversioned table-kit rows remain the runtime storage format. The
+  explicit `migrate-events` adapter writes a separate canonical stream; native
+  IDs and sequence are provenance, not cryptographic authentication.
 - charactercheck and srdcheck remain pre-session/query evaluators. A host joins
   their results through session/entity/correlation references; neither tool is
   required to consume a live TableEvent stream.
@@ -67,3 +67,11 @@ Python and TypeScript declarations are deterministically regenerated from the
 schema enums with `python scripts/generate_contract_types.py`; CI rejects stale
 artifacts. Runtime remains dependency-free. JSON Schema validation is a test
 and integration concern.
+
+CI also builds and cold-installs this candidate with the exact dmcheck commit
+named in the workflow, outside either source checkout. The gate exercises a
+complete clean result, an exact-evidence finding, the canonical transport gap,
+deterministic legacy migration, and redacted content. It validates both event
+and evaluation envelopes with the installed table-kit schema and semantic
+checks. The pinned commit is an integration lock, not a release dependency;
+advance it deliberately when the dmcheck contract consumer changes.

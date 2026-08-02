@@ -86,3 +86,37 @@ jobs:
           node transport/discord/listen.mjs /tmp/t.json 2>/tmp/err.txt
           test $? -eq 2 || { echo "expected exit 2"; exit 1; }
           grep -q "NOPE_TOKEN" /tmp/err.txt
+
+  portfolio-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out table-kit candidate
+        uses: actions/checkout@v5
+        with:
+          path: table-kit-src
+      - name: Check out pinned dmcheck candidate
+        uses: actions/checkout@v5
+        with:
+          repository: chaoz23/dmcheck
+          ref: 17e3a42cbca9182727a168c795f72c4a7b64eac1
+          path: dmcheck-src
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build both candidate wheels
+        run: |
+          python -m pip install build
+          mkdir wheels
+          python -m build --wheel --outdir "$GITHUB_WORKSPACE/wheels" table-kit-src
+          python -m build --wheel --outdir "$GITHUB_WORKSPACE/wheels" dmcheck-src
+      - name: Cold-install and run portfolio conformance
+        run: |
+          python -m venv "$RUNNER_TEMP/portfolio-conformance"
+          "$RUNNER_TEMP/portfolio-conformance/bin/python" -m pip install jsonschema
+          "$RUNNER_TEMP/portfolio-conformance/bin/python" -m pip install \
+            --no-index --find-links "$GITHUB_WORKSPACE/wheels" tablekit dmcheck
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/portfolio-conformance/bin/python" \
+            "$GITHUB_WORKSPACE/table-kit-src/scripts/check_dmcheck_conformance.py" \
+            --tablekit "$RUNNER_TEMP/portfolio-conformance/bin/tablekit" \
+            --dmcheck "$RUNNER_TEMP/portfolio-conformance/bin/dmcheck"
