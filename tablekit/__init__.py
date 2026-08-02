@@ -13,6 +13,9 @@ everything else reads or writes it.
 from .cli import __version__, main
 from .config import TableConfig, load
 from .events import Ledger, make, validate
+from .legacy_events import (LegacyMigration, LegacyMigrationError,
+                            migrate_ledger, migrate_records)
 
 __all__ = ["Ledger", "TableConfig", "load", "main", "make", "validate",
-           "__version__"]
+           "LegacyMigration", "LegacyMigrationError", "migrate_ledger",
+           "migrate_records", "__version__"]

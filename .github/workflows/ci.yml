@@ -55,6 +55,10 @@ jobs:
           tablekit contract event > /dev/null
           tablekit contract golden > /dev/null
           tablekit debrief > /dev/null
+          printf '%s\n' '{"ts":1.0,"type":"event","actor":"GM","text":"Begin."}' > /tmp/legacy.jsonl
+          tablekit migrate-events --ledger /tmp/legacy.jsonl --campaign ci --session cold-wheel --out /tmp/events.jsonl > /tmp/migration.json
+          grep -q '"authority_status": "self_attested"' /tmp/migration.json
+          grep -q '"schema_version":"table.event/1.0"' /tmp/events.jsonl
 
   node:
     runs-on: ubuntu-latest

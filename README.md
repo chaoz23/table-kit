@@ -58,6 +58,19 @@ dmcheck can consume the narrow legacy `turn`/`act`/`event` play lane directly;
 complete cross-tool handoff requires the explicit TableEvent adapter tracked by
 PORT-002 and must never silently discard incompatible rows.
 
+For completed legacy ledgers, the unreleased migration adapter writes a
+separate canonical stream and a machine-readable coverage summary:
+
+```console
+tablekit migrate-events --ledger table-data/session.jsonl \
+  --campaign campaign-id --session session-id --out session.events.jsonl
+```
+
+The migration is deterministic and always `self_attested`. It hashes stable
+migration event IDs, preserves source-native IDs only as source/correlation
+metadata, reports every unprojectable telemetry row, and refuses malformed or
+zero-compatible ledgers. It never rewrites the append-only source ledger.
+
 | lane  | answers                                | how |
 |-------|----------------------------------------|-----|
 | `qa`  | did the machinery work?                | automatic |

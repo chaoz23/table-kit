@@ -17,6 +17,7 @@
    "report [--json] [--out FILE]": "Post-session report. Exit 0 coverage-complete clean, 1 findings/advisories or unresolved routing quarantines, 2 stale/invalid/incomplete or insufficient data.",
    "schema": "Repo-local event schema, route statuses, typed pair outcomes, signal buckets and exit codes as JSON.",
    "contract evaluation|event|golden": "Print the packaged table.evaluation/1.0 schema, table.event/1.0 schema, or ordered interoperability fixture. These contracts are self-attested until an external host supplies protected authority.",
+   "migrate-events --ledger LEGACY.jsonl --campaign ID --session ID --out EVENTS.jsonl [--source-instance ID]": "Deterministically project lossless legacy evidence to a separate self-attested table.event/1.0 stream; print machine-readable coverage and refuse malformed/zero-compatible input.",
    "signal --seat S --kind pacing --quote \"<their words>\"": "Record a signal inferred from what a player already said. Buckets: pacing, floor, comprehension, resonance, spotlight, continuity. The quote is mandatory - an inference without evidence cannot be audited. Advisory always; can never become a defect.",
    "debrief": "With no arguments, print the plain-English close-out questions to ask in your own words. With --seat/--q/--a, record an answer."
   }
