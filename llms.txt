@@ -50,6 +50,10 @@ by tests, not a preference.
 
 - `tablekit contract evaluation|event|golden` exposes the packaged
   `table.evaluation/1.0`, `table.event/1.0`, and interoperability fixture.
+- `tablekit migrate-events --ledger OLD --campaign ID --session ID --out NEW`
+  writes a separate deterministic `table.event/1.0` JSONL stream and prints
+  migration coverage. Output is always self-attested; malformed and
+  zero-compatible ledgers are refused, and skipped telemetry is enumerated.
 - Current evidence is `self_attested`. Only a separate protected host may emit
   `host_attested`; native IDs and same-writer hashes are not authentication.
 - Exit 0 is only coverage-complete `checked_clean`. Findings/advisories exit 1;
@@ -97,5 +101,4 @@ by tests, not a preference.
 ## Related
 
 srdcheck (rules verdicts), charactercheck (sheet derivation), dmcheck (table
-conduct; directly consumes only the legacy `turn`/`act`/`event` lane until the
-explicit TableEvent adapter lands).
+conduct; the unreleased explicit adapter consumes migrated TableEvent streams).

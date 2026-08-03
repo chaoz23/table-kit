@@ -24,7 +24,8 @@ import time
 from . import contracts, detector, pairs, report, ux, uxr
 from .config import ConfigError, load as load_config
 from .events import (SCHEMA, Ledger, PAIR_KINDS, PAIR_OUTCOMES,
-                     ROUTE_STATUSES, SchemaError)
+                     ROUTE_STATUSES, SchemaError, write_atomic)
+from .legacy_events import LegacyMigrationError, migrate_ledger
 
 __version__ = "0.5.1"
 
@@ -54,6 +55,9 @@ USAGE = """tablekit — instrumentation for a live hybrid table
     tablekit schema                   the repo-local event schema, as JSON
     tablekit contract evaluation|event|golden
                                       a packaged suite contract or fixture
+    tablekit migrate-events --ledger LEGACY.jsonl --campaign ID --session ID
+                            --out EVENTS.jsonl [--source-instance ID]
+                                      project legacy evidence as self-attested TableEvents
 
   options
     --config PATH   table config (default $TABLE_CONFIG or ./table.json)
@@ -567,6 +571,41 @@ def cmd_contract(args):
     return 0
 
 
+def cmd_migrate_events(args):
+    ledger_path = _flag(args, "--ledger")
+    campaign_id = _flag(args, "--campaign")
+    session_id = _flag(args, "--session")
+    out_path = _flag(args, "--out")
+    source_instance = _flag(args, "--source-instance",
+                            "tablekit-legacy-migration")
+    _no_positionals(args, "migrate-events")
+    required = (("--ledger", ledger_path), ("--campaign", campaign_id),
+                ("--session", session_id), ("--out", out_path))
+    missing = [name for name, value in required
+               if not isinstance(value, str) or not value.strip()]
+    if missing:
+        raise ConfigError("migrate-events: required non-empty flag(s): %s" %
+                          ", ".join(missing))
+    if os.path.realpath(ledger_path) == os.path.realpath(out_path):
+        raise ConfigError("migrate-events: --out must not replace the legacy ledger")
+    try:
+        migration = migrate_ledger(
+            ledger_path, campaign_id, session_id,
+            source_instance=source_instance)
+    except LegacyMigrationError as exc:
+        print(json.dumps({
+            "schema_version": "table.event.migration/1.0",
+            "status": "refused", "exit_code": 2,
+            "error": exc.to_dict(),
+        }, indent=1))
+        return 2
+    write_atomic(out_path, migration.jsonl())
+    summary = migration.summary()
+    summary["output"] = os.path.abspath(out_path)
+    print(json.dumps(summary, indent=1))
+    return 0
+
+
 COMMANDS = {
     "init": cmd_init, "beat": cmd_beat,
     "inbound": cmd_inbound, "roll": cmd_roll, "consumed": cmd_consumed,
@@ -574,6 +613,7 @@ COMMANDS = {
     "debrief": cmd_debrief, "qc": cmd_qc, "pairs": cmd_pairs,
     "sweep": cmd_sweep, "park": cmd_park, "report": cmd_report,
     "schema": cmd_schema, "contract": cmd_contract,
+    "migrate-events": cmd_migrate_events,
 }
 
 
@@ -592,7 +632,7 @@ def main(argv=None):
         return 2
     try:
         return fn(args)
-    except (ConfigError, SchemaError) as e:
+    except (ConfigError, SchemaError, LegacyMigrationError) as e:
         print(f"{cmd}: {e}", file=sys.stderr)
         return 2
     except FileNotFoundError as e:

@@ -40,6 +40,15 @@ legal Reaction outside the current actor's normal turn, a transport gap, an
 unanswered player question represented by a conduct finding, and explicit
 session closure. Run `tablekit contract event` or `tablekit contract golden`.
 
+`tablekit migrate-events` is the explicit compatibility boundary for the
+repo's older multi-lane JSONL ledger. It emits a separate, contiguous
+`table.event/1.0` stream plus a coverage summary. Migration output is always
+`self_attested`; deterministic migration IDs do not replace legacy native IDs,
+and native IDs do not become authority. Rows without a lossless mapping are
+reported as skipped. Malformed rows, orphan narration acknowledgments, and
+zero-compatible input are refused rather than disappearing into a plausible
+stream.
+
 ## Compatibility and migration
 
 - Readers support their current minor and the immediately previous minor once
