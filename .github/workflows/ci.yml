@@ -166,7 +166,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: chaoz23/charactercheck
-          ref: e6ef29f5beb8f7bae972865e724988c932ebf708
+          ref: db92352e67c6e7839a53ae059a0bf93f21a1e161
           path: charactercheck-src
       - uses: actions/setup-python@v6
         with:
