@@ -154,3 +154,37 @@ jobs:
             "$GITHUB_WORKSPACE/table-kit-src/scripts/check_srdcheck_conformance.py" \
             --tablekit "$RUNNER_TEMP/srdcheck-conformance/bin/tablekit" \
             --srdcheck "$RUNNER_TEMP/srdcheck-conformance/bin/srdcheck"
+
+  charactercheck-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out table-kit candidate
+        uses: actions/checkout@v5
+        with:
+          path: table-kit-src
+      - name: Check out pinned charactercheck candidate
+        uses: actions/checkout@v5
+        with:
+          repository: chaoz23/charactercheck
+          ref: db92352e67c6e7839a53ae059a0bf93f21a1e161
+          path: charactercheck-src
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build both candidate wheels
+        run: |
+          python -m pip install build
+          mkdir wheels
+          python -m build --wheel --outdir "$GITHUB_WORKSPACE/wheels" table-kit-src
+          python -m build --wheel --outdir "$GITHUB_WORKSPACE/wheels" charactercheck-src
+      - name: Cold-install and run charactercheck conformance
+        run: |
+          python -m venv "$RUNNER_TEMP/charactercheck-conformance"
+          "$RUNNER_TEMP/charactercheck-conformance/bin/python" -m pip install jsonschema
+          "$RUNNER_TEMP/charactercheck-conformance/bin/python" -m pip install \
+            --no-index --find-links "$GITHUB_WORKSPACE/wheels" tablekit charactercheck
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/charactercheck-conformance/bin/python" \
+            "$GITHUB_WORKSPACE/table-kit-src/scripts/check_charactercheck_conformance.py" \
+            --tablekit "$RUNNER_TEMP/charactercheck-conformance/bin/tablekit" \
+            --charactercheck "$RUNNER_TEMP/charactercheck-conformance/bin/charactercheck"

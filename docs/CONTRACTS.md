@@ -68,13 +68,16 @@ schema enums with `python scripts/generate_contract_types.py`; CI rejects stale
 artifacts. Runtime remains dependency-free. JSON Schema validation is a test
 and integration concern.
 
-CI also builds and cold-installs this candidate with the exact dmcheck and
-srdcheck commits named in the workflow, outside their source checkouts. The
+CI also builds and cold-installs this candidate with the exact dmcheck,
+srdcheck, and charactercheck commits named in the workflow, outside their
+source checkouts. The
 dmcheck gate exercises a complete clean result, an exact-evidence finding, the
 canonical transport gap, deterministic legacy migration, and redacted content.
 The srdcheck gate exercises successful and failed-but-adjudicated saves, an
 exact-evidence illegal action, missing facts, unsupported content, and invalid
-input. Both validate installed evaluation envelopes with table-kit's schema and
-semantic checks; dmcheck also validates events. Pinned commits are integration
-locks, not release dependencies; advance them deliberately when a consumer
-changes.
+input. The charactercheck gate exercises unsupported sheet mechanics,
+player-authority advisories, unknown coverage, invalid fields/references,
+privacy-safe output, and deterministic replay. All three validate installed
+evaluation envelopes with table-kit's schema and semantic checks; dmcheck also
+validates events. Pinned commits are integration locks, not release
+dependencies; advance them deliberately when a consumer changes.
