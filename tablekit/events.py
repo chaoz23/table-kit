@@ -85,6 +85,12 @@ SCHEMA = {
     "qa.delta":      ("topic", "detail"),
     # --- qc: is the refereeing correct --------------------------------
     "qc.finding": ("check", "detail"),
+    # An external rules rail's verdict, ingested from its --trace
+    # observability stream (srdcheck-shaped: request.completed lines).
+    # Stored so a ruling's provenance survives the evening and session
+    # retro can see which calls the rail actually decided. Never a score.
+    "qc.verdict": ("tool", "query_type", "outcome", "exit_code",
+                   "verdict_id"),
     "qc.pass":    ("checks",),
     # Written ONLY by detector.record(), so "was this session checked?" cannot
     # be satisfied by a finding that some other code path happened to emit.
@@ -218,6 +224,10 @@ FIELD_VALIDATORS = {
     "qa.command": {"cmd": _string, "ok": _boolean},
     "qa.delta": {"topic": _string, "detail": _string},
     "qc.finding": {"check": _string, "detail": _string},
+    "qc.verdict": {"tool": _string, "query_type": _string,
+                   "outcome": _string,
+                   "exit_code": _integer,
+                   "verdict_id": _string},
     "qc.pass": {"checks": _integer},
     "qc.run": {"findings": _integer},
     "qc.mark": {"narrated_through": _integer},
@@ -233,6 +243,13 @@ FIELD_VALIDATORS = {
 }
 
 OPTIONAL_FIELD_VALIDATORS = {
+    "qc.verdict": {
+        "request_id": _string,
+        "adapters": _string,
+        "seat": _string,
+        "duration_ms": _number,
+        "schema_version": _string,
+    },
     "qc.finding": {
         "severity": lambda v, f, t: _enum(v, f, t, ("defect", "attention")),
         "status": lambda v, f, t: _enum(

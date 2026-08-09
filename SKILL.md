@@ -48,6 +48,8 @@ tablekit checkin --seat vesh                # noticed a quiet seat
 tablekit turn --seat bram [--wait N]        # a seat got the floor
 tablekit qc [--json]                        # run the checks now (exit 1 on findings)
 tablekit pairs [--json]                     # what's still open
+srdcheck query ... --trace 2>&1 | tablekit verdict [--seat S]
+                                            # record the rules rail's verdict provenance
 ```
 
 Try it with zero setup: `python3 examples/demo_session.py` runs a synthetic
@@ -95,9 +97,11 @@ in-fiction, not as a form.
 
 - **Session retro:** the session JSONL is dmcheck-compatible — run
   `dmcheck run <session>.jsonl --charter <table charter>` after close-out.
-- **Live ruling:** when srdcheck adjudicates mid-turn, record the ruling as
-  a beat and its dice as `roll`/`consumed` pairs; the ledger becomes the
-  precedent trail.
+- **Live ruling:** when srdcheck adjudicates mid-turn, pipe its `--trace`
+  stream through `tablekit verdict` — the ledger stores the verdict's
+  provenance (tool@version, adapter pins, sha256 verdict id) as a
+  `qc.verdict` record — then narrate the ruling as a beat and its dice as
+  `roll`/`consumed` pairs. The ledger becomes the precedent trail.
 - **Session start:** charactercheck `seatpack --for-dm` supplies each
   seat's numbers; tablekit tracks the evening those numbers live through.
 
@@ -108,6 +112,9 @@ Family contract: [FAMILY.md](https://github.com/chaoz23/srdcheck/blob/main/FAMIL
 - **0.2.0:** bang markers CUT — replaced by inferred signals + a
   plain-English close-out. If you remember `!markers`, that's stale and
   tests reject reintroducing them.
+- **0.5.x:** `tablekit verdict` ingests a rules rail's `--trace`
+  observability stream as `qc.verdict` provenance records (pilot: srdcheck;
+  advisory always, never scored).
 - **0.4.x:** five lanes stable (qa/qc/ux/uxr/out); uxr inferred from
   ordinary speech during play, asked about conversationally at close.
 
