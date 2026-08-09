@@ -3,6 +3,8 @@
 **Run a tabletop game where some of the seats are AI agents — and find out
 afterwards how it actually went.**
 
+**Agents start here → [SKILL.md](SKILL.md)** — when to call this, worked examples, MUST/MUST NOTs. Family contract: [FAMILY.md](https://github.com/chaoz23/srdcheck/blob/main/FAMILY.md).
+
 Three deterministic referees already exist for the *rules* of such a table:
 [srdcheck](https://github.com/chaoz23/srdcheck) for rules verdicts,
 [charactercheck](https://github.com/chaoz23/charactercheck) for character
