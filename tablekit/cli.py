@@ -43,6 +43,8 @@ USAGE = """tablekit — instrumentation for a live hybrid table
     tablekit signal --seat S --kind pacing --quote "<their words>"
                                                record an inferred signal
     tablekit park "<what looked off>" [--topic X]   park it, keep playing
+    srdcheck query ... --trace 2>&1 | tablekit verdict [--seat S]
+                                               record the rail's verdict provenance
     tablekit park --list | --done "<detail>"    the standing issues list
     tablekit qc [--state FILE] [--json]        run and record the checks
     tablekit pairs                             what is still open
@@ -416,6 +418,74 @@ def cmd_turn(args):
     return 0
 
 
+def cmd_verdict(args):
+    """Ingest a rules rail's --trace stream into the ledger.
+
+    Reads stdin, keeps every line that is a JSON object shaped like an
+    srdcheck observability `request.completed` event (verdict_id + engine +
+    exit_code present), and appends one `qc.verdict` record per line. All
+    other lines — the human-facing verdict JSON, `request.started`, prose —
+    are skipped silently, so `srdcheck query ... --trace 2>&1 | tablekit
+    verdict` works as a single pipe.
+
+    This records provenance, not authority: the verdict stays advisory and
+    the ruling stays the GM's. Nothing here is ever aggregated into a score.
+    """
+    seat = _flag(args, "--seat")
+    cfg, led = _ctx(args)
+    _no_positionals(args, "verdict")
+    sid = _seat_id(cfg, seat) if seat else None
+    if seat:
+        _known_seat(cfg, seat)
+    ingested = 0
+    for line in sys.stdin:
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(ev, dict) or ev.get("event") != "request.completed":
+            continue
+        engine = ev.get("engine") or {}
+        verdict_id = ev.get("verdict_id")
+        exit_code = ev.get("exit_code")
+        if (not verdict_id or not engine.get("name")
+                or isinstance(exit_code, bool)
+                or not isinstance(exit_code, int)):
+            continue
+        adapters = ",".join(
+            f"{a.get('name')}@{a.get('version')}"
+            for a in ev.get("adapters") or [] if isinstance(a, dict))
+        led.append(
+            "qc.verdict",
+            tool=f"{engine.get('name')}@{engine.get('version')}",
+            query_type=str(ev.get("query_type") or "unknown"),
+            outcome=str(ev.get("outcome") or "unknown"),
+            exit_code=exit_code,
+            verdict_id=str(verdict_id),
+            request_id=(str(ev["request_id"])
+                        if ev.get("request_id") is not None else None),
+            adapters=adapters or None,
+            duration_ms=(ev["duration_ms"]
+                         if isinstance(ev.get("duration_ms"), (int, float))
+                         and not isinstance(ev.get("duration_ms"), bool)
+                         else None),
+            schema_version=(str(ev["schema_version"])
+                            if ev.get("schema_version") is not None else None),
+            seat=sid,
+        )
+        ingested += 1
+    if not ingested:
+        print("verdict: no request.completed events on stdin — pipe the "
+              "rail's --trace stream (e.g. srdcheck query ... --trace 2>&1 "
+              "| tablekit verdict)", file=sys.stderr)
+        return 2
+    print(f"{ingested} verdict(s) recorded")
+    return 0
+
+
 def cmd_park(args):
     """Park something for below-the-table investigation.
 
@@ -611,7 +681,8 @@ COMMANDS = {
     "inbound": cmd_inbound, "roll": cmd_roll, "consumed": cmd_consumed,
     "checkin": cmd_checkin, "turn": cmd_turn, "signal": cmd_signal,
     "debrief": cmd_debrief, "qc": cmd_qc, "pairs": cmd_pairs,
-    "sweep": cmd_sweep, "park": cmd_park, "report": cmd_report,
+    "sweep": cmd_sweep, "park": cmd_park, "verdict": cmd_verdict,
+    "report": cmd_report,
     "schema": cmd_schema, "contract": cmd_contract,
     "migrate-events": cmd_migrate_events,
 }
