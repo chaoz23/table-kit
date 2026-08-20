@@ -1,5 +1,6 @@
 {
  "name": "tablekit",
+ "family_class": "transport",
  "description": "Glue and instrumentation for a live tabletop game where some seats are AI agents. Produces one append-only JSONL per session that is simultaneously the play ledger (dmcheck-compatible) and a five-lane telemetry stream: qa (did the machinery work), qc (was the refereeing correct), ux (what the seat's evening looked like), uxr (how it felt from a seat - inferred from ordinary speech during play, then asked about conversationally at the close), out (outcome pairs recording whether a craft move actually worked).",
  "invocation": {
   "command": "tablekit",
