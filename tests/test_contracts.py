@@ -1,4 +1,5 @@
 import copy
+import io
 import json
 import os
 import subprocess
@@ -138,6 +139,30 @@ class ContractTests(unittest.TestCase):
                 cwd=os.path.dirname(os.path.dirname(__file__)), text=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             self.assertEqual(json.loads(result.stdout)["properties"]["schema_version"]["const"], version)
+
+
+class FamilyContractTests(unittest.TestCase):
+    """FAMILY.md clause 7 codifies `--schema` as a flag, and it binds every
+    member class. table-kit exposes the capability as a `schema` subcommand, so
+    the flag spelling is an alias -- without it a fresh-context agent following
+    the family contract verbatim is refused (chaoz23/table-kit#23)."""
+
+    def _capture(self, argv):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = main(argv)
+        return code, buf.getvalue()
+
+    def test_schema_flag_is_accepted(self):
+        code, out = self._capture(["--schema"])
+        self.assertEqual(code, 0)
+        json.loads(out)
+
+    def test_schema_flag_matches_the_subcommand(self):
+        flag_code, flag_out = self._capture(["--schema"])
+        cmd_code, cmd_out = self._capture(["schema"])
+        self.assertEqual(flag_code, cmd_code)
+        self.assertEqual(json.loads(flag_out), json.loads(cmd_out))
 
 
 class LegacyMigrationTests(unittest.TestCase):
