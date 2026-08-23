@@ -697,6 +697,12 @@ def main(argv=None):
         print(__version__)
         return 0
     cmd = args.pop(0)
+    # FAMILY.md clause 7 codifies `--schema` as a flag, and it binds every member
+    # class. The capability already exists as a subcommand; accept the codified
+    # spelling as an alias so a fresh-context agent following the family contract
+    # verbatim is not refused. See chaoz23/table-kit#23.
+    if cmd == "--schema":
+        cmd = "schema"
     fn = COMMANDS.get(cmd)
     if not fn:
         print(f"unknown command {cmd!r}\n\n{USAGE}", file=sys.stderr)
