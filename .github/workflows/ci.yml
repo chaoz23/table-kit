@@ -5,6 +5,39 @@ on:
   pull_request:
 
 jobs:
+  family-conformance:
+    # Executes this repo's documented exit contract against its real CLI and
+    # fails if SKILL.md's claims and the tool's behaviour disagree. The clause-7
+    # acceptance test checks an agent can *invoke* this tool; this checks that
+    # what SKILL.md promises is *true*. Every family member passed the former
+    # while failing the latter.
+    #
+    # The gate and its waiver list are canonical in srdcheck and read from there
+    # rather than copied, per FAMILY.md's pin-by-link rule. srdcheck is pinned by
+    # SHA, matching the existing cross-repo convention: a new rule landing in
+    # srdcheck must not turn this repo's CI red on an unrelated PR.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v5
+        with:
+          path: candidate
+      - name: Check out pinned srdcheck (canonical gate + baseline)
+        uses: actions/checkout@v5
+        with:
+          repository: chaoz23/srdcheck
+          ref: 27dee98cb7cb86e6ef86e34568d08954179f9a82
+          path: srdcheck-src
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install so the gate probes the real console script
+        run: pip install -e ./candidate
+      - name: SKILL.md claims match the CLI
+        run: |
+          python srdcheck-src/scripts/family_conformance.py candidate \
+            --baseline srdcheck-src/family-conformance-baseline.json
+
   test:
     runs-on: ubuntu-latest
     strategy:
