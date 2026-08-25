@@ -74,13 +74,13 @@ def _flag(args, name, default=None, takes_value=True):
     if not positions:
         return default
     if len(positions) > 1:
-        raise ConfigError(f"{name}: flag may be supplied only once")
+        raise UsageError(f"{name}: flag may be supplied only once")
     i = positions[0]
     args.pop(i)
     if not takes_value:
         return True
     if i >= len(args) or args[i].startswith("--"):
-        raise ConfigError(f"{name}: expected a value")
+        raise UsageError(f"{name}: expected a value")
     return args.pop(i)
 
 
