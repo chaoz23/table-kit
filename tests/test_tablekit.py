@@ -757,8 +757,10 @@ class TestCLI(TempLedger):
         self.assertEqual(cli.main([]), 0)
         self.assertEqual(cli.main(["--version"]), 0)
 
-    def test_unknown_command_refuses(self):
-        self.assertEqual(cli.main(["frobnicate"]), 2)
+    def test_unknown_command_is_a_usage_error(self):
+        # Exit 3, not 2. FAMILY.md clause 1 keeps malformed calls disjoint from
+        # the honest lane, which an agent routes to a human without retrying.
+        self.assertEqual(cli.main(["frobnicate"]), 3)
 
     def test_unknown_duplicate_and_missing_flags_refuse_before_write(self):
         cases = [
@@ -768,7 +770,7 @@ class TestCLI(TempLedger):
         ]
         for args in cases:
             with self.subTest(args=args):
-                self.assertEqual(self.run_cli(*args), 2)
+                self.assertEqual(self.run_cli(*args), 3)
                 self.assertFalse(os.path.exists(self.led.path))
 
     def test_empty_global_values_do_not_silently_select_defaults(self):

@@ -22,7 +22,7 @@ import sys
 import time
 
 from . import contracts, detector, pairs, report, ux, uxr
-from .config import ConfigError, load as load_config
+from .config import ConfigError, UsageError, load as load_config
 from .events import (SCHEMA, Ledger, PAIR_KINDS, PAIR_OUTCOMES,
                      ROUTE_STATUSES, SchemaError, write_atomic)
 from .legacy_events import LegacyMigrationError, migrate_ledger
@@ -74,20 +74,20 @@ def _flag(args, name, default=None, takes_value=True):
     if not positions:
         return default
     if len(positions) > 1:
-        raise ConfigError(f"{name}: flag may be supplied only once")
+        raise UsageError(f"{name}: flag may be supplied only once")
     i = positions[0]
     args.pop(i)
     if not takes_value:
         return True
     if i >= len(args) or args[i].startswith("--"):
-        raise ConfigError(f"{name}: expected a value")
+        raise UsageError(f"{name}: expected a value")
     return args.pop(i)
 
 
 def _unknown_options(args):
     unknown = [value for value in args if value.startswith("-")]
     if unknown:
-        raise ConfigError(
+        raise UsageError(
             f"unknown option(s): {', '.join(unknown)}; see `tablekit --help`")
 
 
@@ -706,9 +706,14 @@ def main(argv=None):
     fn = COMMANDS.get(cmd)
     if not fn:
         print(f"unknown command {cmd!r}\n\n{USAGE}", file=sys.stderr)
-        return 2
+        return 3
     try:
         return fn(args)
+    except UsageError as e:
+        # Checked before ConfigError: UsageError subclasses it, and a malformed
+        # call must not wear the honest lane's exit code.
+        print(f"{cmd}: {e}", file=sys.stderr)
+        return 3
     except (ConfigError, SchemaError, LegacyMigrationError) as e:
         print(f"{cmd}: {e}", file=sys.stderr)
         return 2

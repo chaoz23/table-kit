@@ -165,6 +165,38 @@ class FamilyContractTests(unittest.TestCase):
         self.assertEqual(json.loads(flag_out), json.loads(cmd_out))
 
 
+class DisjointExitCodeTests(unittest.TestCase):
+    """FAMILY.md clause 1: exit 2 is the honest lane -- an answer a consuming
+    agent routes to a human without retrying. A malformed call is the opposite
+    and must not wear the same code, or an agent escalates its own mistakes as
+    if they were rulings (chaoz23/table-kit#1). Exit 3 matches srdcheck."""
+
+    def _code(self, argv):
+        with redirect_stdout(io.StringIO()):
+            return main(argv)
+
+    def test_unknown_command_is_a_usage_error(self):
+        self.assertEqual(self._code(["not-a-real-command"]), 3)
+
+    def test_unknown_flag_is_a_usage_error(self):
+        self.assertEqual(self._code(["--zzz-not-a-real-flag"]), 3)
+
+    def test_unknown_subcommand_option_is_a_usage_error(self):
+        self.assertEqual(self._code(["report", "--zzz-bad-option"]), 3)
+
+    def test_a_real_refusal_stays_on_exit_two(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                self.assertEqual(self._code(["init"]), 0)
+                # Second init refuses because the file exists. That is a verdict,
+                # not a bad call, so it must NOT have moved to 3.
+                self.assertEqual(self._code(["init"]), 2)
+            finally:
+                os.chdir(cwd)
+
+
 class LegacyMigrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

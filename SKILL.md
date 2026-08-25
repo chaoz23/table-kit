@@ -33,8 +33,13 @@ tracking.
 ## Exit codes
 
 `0` = recorded/clean · `1` = a check failed (e.g. `beat`: the cue would be
-dropped in transit; `qc`: findings) · `2` = can't do that (`init`: file
-exists; `consumed`: id not open). Read the code; the message says which.
+dropped in transit; `qc`: findings) · `2` = can't adjudicate — either a refusal
+(`init`: file exists; `consumed`: id not open) **or incomplete coverage**
+(`qc`, `report`: not enough of the session was evaluated to judge it) · `3` =
+usage error (unknown command or flag).
+
+Exit 2 and exit 3 are disjoint on purpose: **2 is an answer you route to a
+human, 3 is a mistake you fix yourself.** Read the code; the message says which.
 
 ## Invocation
 
