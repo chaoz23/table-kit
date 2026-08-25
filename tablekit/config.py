@@ -57,6 +57,22 @@ class ConfigError(ValueError):
     pass
 
 
+class UsageError(ConfigError):
+    """A malformed invocation -- an unknown command or flag.
+
+    FAMILY.md clause 1 keeps this disjoint from exit 2. Exit 2 is the honest
+    lane: a cannot-adjudicate verdict a consuming agent routes to a human
+    WITHOUT retrying. A bad call is the opposite -- the caller fixes it and
+    retries. Sharing one code made them indistinguishable, so an agent
+    escalated its own mistakes as if they were rulings. Exits 3, matching
+    srdcheck. See #1.
+
+    Subclasses ConfigError so existing handlers still catch it; cli.main()
+    checks for it first and returns 3.
+    """
+
+
+
 #: Who throws the dice for a seat. `self` is the default and the right one for
 #: almost everyone — taking the dice off a player removes the best moment in
 #: the game. `dm` is an opt-out that matters to a real minority: accessibility,

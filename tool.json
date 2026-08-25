@@ -34,7 +34,8 @@
  "exit_codes": {
   "0": "clean",
   "1": "findings worth looking at",
-  "2": "refused — bad input or not enough data"
+  "2": "cannot adjudicate — refused, or not enough data to judge (route to a human)",
+  "3": "usage error — unknown command or flag (fix the call and retry)"
  },
  "related": {
   "srdcheck": "rules verdicts",
